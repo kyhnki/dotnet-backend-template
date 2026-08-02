@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="ValidationErrorTitle" xml:space="preserve">
+    <value>Bir veya daha fazla doğrulama hatası oluştu.</value>
+  </data>
+  <data name="UnexpectedErrorTitle" xml:space="preserve">
+    <value>Beklenmeyen bir hata oluştu.</value>
+  </data>
+  <data name="CampaignNameRequired" xml:space="preserve">
+    <value>Name alanı zorunludur.</value>
+  </data>
+  <data name="CampaignNameMaximumLength" xml:space="preserve">
+    <value>Name en fazla {0} karakter olabilir.</value>
+  </data>
+  <data name="CampaignStartsAtUtcMustUseUtcOffset" xml:space="preserve">
+    <value>StartsAtUtc, UTC saat dilimi farkını (+00:00) kullanmalıdır.</value>
+  </data>
+  <data name="CampaignEndsAtUtcMustUseUtcOffset" xml:space="preserve">
+    <value>EndsAtUtc, UTC saat dilimi farkını (+00:00) kullanmalıdır.</value>
+  </data>
+  <data name="CampaignEndsAtUtcMustBeAfterStartsAtUtc" xml:space="preserve">
+    <value>EndsAtUtc, StartsAtUtc değerinden sonra olmalıdır.</value>
+  </data>
+</root>

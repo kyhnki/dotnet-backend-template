@@ -1,0 +1,62 @@
+# .NET build and package artifacts
+[Bb]in/
+[Oo]bj/
+[Aa]rtifacts/
+packages/
+*.nupkg
+*.snupkg
+project.lock.json
+
+# Test, coverage, and benchmark output
+TestResults/
+test-results/
+coverage/
+coverage-results/
+*.coverage
+*.coveragexml
+*.trx
+BenchmarkDotNet.Artifacts/
+
+# Visual Studio, VS Code, and JetBrains Rider
+.vs/
+.vscode/
+.idea/
+*.rsuser
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.sln.iml
+*.DotSettings.user
+_ReSharper*/
+
+# Local configuration and secrets
+.claude/settings.local.json
+.env
+.env.*
+!.env.example
+!.env.*.example
+appsettings.Local.json
+appsettings.*.Local.json
+appsettings.*.local.json
+*.p12
+*.pfx
+*.key
+
+# Logs and temporary editor files
+*.log
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+Desktop.ini
+$RECYCLE.BIN/

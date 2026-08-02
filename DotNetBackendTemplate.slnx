@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/DotNetBackendTemplate.Api/DotNetBackendTemplate.Api.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/DotNetBackendTemplate.IntegrationTests/DotNetBackendTemplate.IntegrationTests.csproj" />
+    <Project Path="tests/DotNetBackendTemplate.UnitTests/DotNetBackendTemplate.UnitTests.csproj" />
+  </Folder>
+</Solution>

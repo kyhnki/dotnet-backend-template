@@ -1,6 +1,6 @@
-# Architecture
+# Basic Architecture
 
-## Shape
+## Purpose
 
 This repository has one deployable API assembly. Clean Architecture is applied as a small set of dependency rules inside that assembly; vertical slices define the unit of change.
 

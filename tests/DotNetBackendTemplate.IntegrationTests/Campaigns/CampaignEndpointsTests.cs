@@ -182,6 +182,150 @@ public sealed class CampaignEndpointsTests(ApiFactory factory) : IClassFixture<A
     }
 
     [Fact]
+    public async Task DeleteCampaignSoftDeletesAndHidesItFromQueries()
+    {
+        using HttpClient client = factory.CreateAuthenticatedClient();
+        string campaignName = $"Deleted {Guid.NewGuid():N}";
+        HttpResponseMessage createResponse = await client.PostAsJsonAsync(
+            "/api/v1/campaigns",
+            ValidRequest(campaignName));
+        CreateCampaign.Response? created = await createResponse.Content
+            .ReadFromJsonAsync<CreateCampaign.Response>(JsonOptions);
+
+        created.Should().NotBeNull();
+        CreateCampaign.Response createdCampaign = created!;
+
+        HttpResponseMessage deleteResponse = await client.DeleteAsync(
+            $"/api/v1/campaigns/{createdCampaign.Id}");
+
+        deleteResponse.StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        HttpResponseMessage getResponse = await client.GetAsync(
+            $"/api/v1/campaigns/{createdCampaign.Id}");
+        getResponse.StatusCode.Should().Be(HttpStatusCode.NotFound);
+
+        HttpResponseMessage listResponse = await client.GetAsync("/api/v1/campaigns?page=1&pageSize=100");
+        string listJson = await listResponse.Content.ReadAsStringAsync();
+        listJson.Should().NotContain(campaignName);
+
+        using IServiceScope scope = factory.Services.CreateScope();
+        AppDbContext dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        // The row is retained; only the global query filter hides it.
+        Campaign campaign = await dbContext.Campaigns
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .SingleAsync(item => item.Id == createdCampaign.Id);
+
+        campaign.IsDeleted.Should().BeTrue();
+        campaign.DeletedAtUtc.Should().Be(factory.Clock.GetUtcNow());
+        campaign.Name.Should().Be(campaignName);
+    }
+
+    [Fact]
+    public async Task DeleteCampaignRecordsDeletedAuditLog()
+    {
+        using HttpClient client = factory.CreateAuthenticatedClient();
+        string campaignName = $"Audited delete {Guid.NewGuid():N}";
+        HttpResponseMessage createResponse = await client.PostAsJsonAsync(
+            "/api/v1/campaigns",
+            ValidRequest(campaignName));
+        CreateCampaign.Response? created = await createResponse.Content
+            .ReadFromJsonAsync<CreateCampaign.Response>(JsonOptions);
+
+        created.Should().NotBeNull();
+        CreateCampaign.Response createdCampaign = created!;
+
+        await client.DeleteAsync($"/api/v1/campaigns/{createdCampaign.Id}");
+
+        using IServiceScope scope = factory.Services.CreateScope();
+        AppDbContext dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        AuditLog deleted = await dbContext.AuditLogs
+            .AsNoTracking()
+            .SingleAsync(log => log.EntityId == createdCampaign.Id.ToString()
+                && log.Action == AuditAction.Deleted);
+
+        deleted.UserId.Should().Be("integration-test-user");
+        deleted.OldValuesJson.Should().Contain(campaignName);
+        deleted.NewValuesJson.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task SoftDeleteIsAuditedAsDeletedWhenTheEntryIsAlreadyModified()
+    {
+        // A retried SaveChanges re-enters the pipeline with the entry already converted to
+        // Modified, and interceptor order is not guaranteed. The audit action is derived from
+        // IsDeleted changing rather than from EntityState, so both cases still record Deleted.
+        using HttpClient client = factory.CreateAuthenticatedClient();
+        HttpResponseMessage createResponse = await client.PostAsJsonAsync(
+            "/api/v1/campaigns",
+            ValidRequest($"Already modified {Guid.NewGuid():N}"));
+        CreateCampaign.Response? created = await createResponse.Content
+            .ReadFromJsonAsync<CreateCampaign.Response>(JsonOptions);
+
+        created.Should().NotBeNull();
+        CreateCampaign.Response createdCampaign = created!;
+
+        using IServiceScope scope = factory.Services.CreateScope();
+        AppDbContext dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        Campaign campaign = await dbContext.Campaigns
+            .SingleAsync(item => item.Id == createdCampaign.Id);
+
+        campaign.IsDeleted = true;
+        campaign.DeletedAtUtc = factory.Clock.GetUtcNow();
+        await dbContext.SaveChangesAsync();
+
+        AuditLog audited = await dbContext.AuditLogs
+            .AsNoTracking()
+            .SingleAsync(log => log.EntityId == createdCampaign.Id.ToString()
+                && log.Action == AuditAction.Deleted);
+
+        audited.NewValuesJson.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task DeletingCampaignTwiceReturnsNotFound()
+    {
+        using HttpClient client = factory.CreateAuthenticatedClient();
+        HttpResponseMessage createResponse = await client.PostAsJsonAsync(
+            "/api/v1/campaigns",
+            ValidRequest($"Twice {Guid.NewGuid():N}"));
+        CreateCampaign.Response? created = await createResponse.Content
+            .ReadFromJsonAsync<CreateCampaign.Response>(JsonOptions);
+
+        created.Should().NotBeNull();
+        string route = $"/api/v1/campaigns/{created!.Id}";
+
+        HttpResponseMessage first = await client.DeleteAsync(route);
+        HttpResponseMessage second = await client.DeleteAsync(route);
+
+        first.StatusCode.Should().Be(HttpStatusCode.NoContent);
+        second.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task DeleteCampaignWithUnknownIdReturnsNotFound()
+    {
+        using HttpClient client = factory.CreateAuthenticatedClient();
+
+        HttpResponseMessage response = await client.DeleteAsync(
+            $"/api/v1/campaigns/{Guid.NewGuid()}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task DeleteCampaignWithoutWriteRoleReturnsForbidden()
+    {
+        using HttpClient client = factory.CreateAuthenticatedClient(role: null);
+
+        HttpResponseMessage response = await client.DeleteAsync(
+            $"/api/v1/campaigns/{Guid.NewGuid()}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
     public async Task CreateCampaignWritesTransactionalAuditLog()
     {
         using HttpClient client = factory.CreateAuthenticatedClient();

@@ -79,10 +79,11 @@ Role values and policy names are centralized under `Infrastructure/Authorization
 ## Campaign example
 
 ```text
-POST /api/v1/campaigns                 Administrator or CampaignManager
-PUT  /api/v1/campaigns/{id}            Administrator or CampaignManager
-GET  /api/v1/campaigns/{id}
-GET  /api/v1/campaigns?page=1&pageSize=20
+POST   /api/v1/campaigns               Administrator or CampaignManager
+PUT    /api/v1/campaigns/{id}          Administrator or CampaignManager
+DELETE /api/v1/campaigns/{id}          Administrator or CampaignManager
+GET    /api/v1/campaigns/{id}
+GET    /api/v1/campaigns?page=1&pageSize=20
 ```
 
 Each operation lives in one slice file under `Features/Campaigns`. Commands modify tracked EF entities. Queries always use `AsNoTracking()` and project only the response fields needed by that endpoint. The list endpoint normalizes the page to at least `1` and clamps page size to `1..100`.
@@ -139,6 +140,14 @@ The design-time factory reads the database connection from user secrets or `Conn
 EF Core writes an `AuditLog` row in the same transaction whenever an entity implementing `IAuditableEntity` is added, modified, or deleted. `Campaign` opts in by default. Records include the action, entity and key, authenticated subject, trace ID, request path, and JSON old/new values.
 
 Use `[AuditIgnore]` on secrets, tokens, large values, and personal data that does not belong in the audit trail. Auditable entities must assign their keys before `SaveChanges`; application-generated GUIDs are the template default. Audit records are intentionally not exposed through an API endpoint. Define retention rules and restrict direct table access before production use.
+
+## Soft delete
+
+Entities opt into soft delete by implementing `ISoftDeletable`. A global query filter is applied to them by convention, so a deleted row disappears from every query without feature handlers doing anything. `Campaign` opts in by default; `DELETE /api/v1/campaigns/{id}` marks the row deleted and returns `204`, and a second delete returns `404`.
+
+An EF Core interceptor turns `Remove` into an update that sets `IsDeleted` and `DeletedAtUtc`. The audit trail still records the change as `Deleted`, because the audit action is derived from `IsDeleted` changing rather than from EF's entity state — which also keeps it correct when a transient failure retries the save.
+
+Read deleted rows with `IgnoreQueryFilters()`. Put `HasFilter("[IsDeleted] = 0")` on any unique index of a soft-deletable entity, or a deleted row will permanently reserve its unique value. Soft delete is not erasure: a genuine "delete my data" request needs a hard delete, and deleted rows need a retention policy.
 
 ## Docker Compose
 

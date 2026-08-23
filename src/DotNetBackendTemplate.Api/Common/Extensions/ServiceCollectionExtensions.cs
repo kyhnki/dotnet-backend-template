@@ -6,6 +6,7 @@ using DotNetBackendTemplate.Api.Infrastructure.Observability;
 using DotNetBackendTemplate.Api.Infrastructure.OpenApi;
 using DotNetBackendTemplate.Api.Persistence;
 using DotNetBackendTemplate.Api.Persistence.Auditing;
+using DotNetBackendTemplate.Api.Persistence.SoftDelete;
 using FluentValidation;
 using MediatR;
 using Microsoft.AspNetCore.Localization;
@@ -27,11 +28,14 @@ internal static class ServiceCollectionExtensions
         services.AddHttpContextAccessor();
         services.AddSingleton(TimeProvider.System);
         services.AddScoped<AuditSaveChangesInterceptor>();
+        services.AddScoped<SoftDeleteSaveChangesInterceptor>();
         services.AddDbContext<AppDbContext>((serviceProvider, options) =>
             options
                 .UseSqlServer(connectionString, sqlOptions =>
                     sqlOptions.EnableRetryOnFailure())
-                .AddInterceptors(serviceProvider.GetRequiredService<AuditSaveChangesInterceptor>()));
+                .AddInterceptors(
+                    serviceProvider.GetRequiredService<AuditSaveChangesInterceptor>(),
+                    serviceProvider.GetRequiredService<SoftDeleteSaveChangesInterceptor>()));
 
         services.AddMediatR(options =>
         {

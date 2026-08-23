@@ -18,3 +18,4 @@ Architecture Decision Records (ADRs) capture decisions that materially affect th
 | [0002](0002-persist-audit-logs-with-ef-core-interceptor.md) | Accepted | Persist opt-in audit logs with an EF Core interceptor |
 | [0003](0003-use-time-provider-and-utc-timestamps.md) | Accepted | Use TimeProvider and require UTC timestamps |
 | [0004](0004-localize-api-errors.md) | Accepted | Localize API errors through Accept-Language |
+| [0005](0005-soft-delete-opt-in-entities.md) | Accepted | Soft-delete opt-in entities with a global query filter |

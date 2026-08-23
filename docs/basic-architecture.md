@@ -37,6 +37,7 @@ Tests are separate assemblies but are not deployable services.
 - Role names and policies are centralized; endpoints refer to policy constants instead of raw role strings.
 - Persistence auditing is opt-in through `IAuditableEntity`; audit rows commit with the business change through the EF Core interceptor.
 - Sensitive or oversized properties on auditable entities must use `[AuditIgnore]`.
+- Soft delete is opt-in through `ISoftDeletable`; its `!IsDeleted` query filter is applied by convention, deletes become updates, and the audit trail still records them as `Deleted`. Unique indexes on such entities must be filtered, and reads that need deleted rows use `IgnoreQueryFilters()`.
 - Code that needs the current instant injects `TimeProvider` and calls `GetUtcNow`; direct system-clock APIs are rejected by analyzers.
 - API, entity, and database timestamps use `DateTimeOffset` with a UTC offset. User-local display and timezone conversion belong to clients unless a business rule explicitly requires timezone-aware scheduling.
 - Client-facing validation and Problem Details text comes from shared localization resources. Machine-readable fields, logs, persisted data, and OpenAPI metadata remain culture-neutral.

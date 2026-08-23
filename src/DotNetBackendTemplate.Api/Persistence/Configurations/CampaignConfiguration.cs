@@ -32,11 +32,21 @@ internal sealed class CampaignConfiguration : IEntityTypeConfiguration<Campaign>
             .HasColumnType("datetimeoffset")
             .IsRequired();
 
+        builder.Property(campaign => campaign.IsDeleted)
+            .IsRequired()
+            .HasDefaultValue(false);
+
+        builder.Property(campaign => campaign.DeletedAtUtc)
+            .HasColumnType("datetimeoffset");
+
+        // The soft-delete query filter appends IsDeleted = 0 to every query, so the index
+        // that serves those queries is filtered to match.
         builder.HasIndex(campaign => new
         {
             campaign.Status,
             campaign.StartsAtUtc,
             campaign.EndsAtUtc,
-        });
+        })
+            .HasFilter("[IsDeleted] = 0");
     }
 }

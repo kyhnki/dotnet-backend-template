@@ -4,6 +4,7 @@ using System.Reflection;
 using System.Security.Claims;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using DotNetBackendTemplate.Api.Persistence.SoftDelete;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -78,7 +79,9 @@ internal sealed class AuditSaveChangesInterceptor(
         AuditAction action = entry.State switch
         {
             EntityState.Added => AuditAction.Added,
-            EntityState.Modified => AuditAction.Modified,
+            EntityState.Modified => IsSoftDelete(entry)
+                ? AuditAction.Deleted
+                : AuditAction.Modified,
             EntityState.Deleted => AuditAction.Deleted,
             _ => throw new UnreachableException(),
         };
@@ -110,6 +113,24 @@ internal sealed class AuditSaveChangesInterceptor(
             OldValuesJson = Serialize(oldValues),
             NewValuesJson = Serialize(newValues),
         };
+    }
+
+    /// <summary>
+    /// A soft delete reaches the database as an update, so the action is derived from meaning
+    /// rather than from <see cref="EntityState"/>. Deriving it this way keeps the audit trail
+    /// correct no matter which order the interceptors run in, and keeps a retried
+    /// <c>SaveChanges</c> consistent with its first attempt.
+    /// </summary>
+    private static bool IsSoftDelete(EntityEntry entry)
+    {
+        if (entry.Entity is not ISoftDeletable)
+        {
+            return false;
+        }
+
+        PropertyEntry isDeleted = entry.Property(nameof(ISoftDeletable.IsDeleted));
+
+        return isDeleted.CurrentValue is true && isDeleted.OriginalValue is false;
     }
 
     private static Dictionary<string, object?> GetValues(

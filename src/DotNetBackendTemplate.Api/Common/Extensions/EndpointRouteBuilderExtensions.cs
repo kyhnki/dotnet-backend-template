@@ -16,6 +16,7 @@ internal static class EndpointRouteBuilderExtensions
         GetCampaign.MapEndpoint(campaigns);
         GetCampaigns.MapEndpoint(campaigns);
         UpdateCampaign.MapEndpoint(campaigns);
+        DeleteCampaign.MapEndpoint(campaigns);
 
         endpoints.MapGet("/health/live", CheckLiveAsync)
             .WithName("LiveHealth")

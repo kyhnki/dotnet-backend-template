@@ -52,9 +52,10 @@ public static class CreateCampaign
     {
         public async Task<Response> Handle(Command request, CancellationToken cancellationToken)
         {
+            // Id is left unset: EF assigns a SQL Server-ordered sequential GUID when the entity
+            // is added, which keeps the key available before SaveChanges for auditing.
             Campaign campaign = new()
             {
-                Id = Guid.NewGuid(),
                 Name = request.Name.Trim(),
                 StartsAtUtc = request.StartsAtUtc,
                 EndsAtUtc = request.EndsAtUtc,

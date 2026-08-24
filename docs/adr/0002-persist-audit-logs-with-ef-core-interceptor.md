@@ -16,7 +16,7 @@ Use a scoped EF Core `SaveChangesInterceptor` that creates `AuditLog` rows for e
 
 Each record contains the UTC timestamp, add/modify/delete action, entity type and ID, authenticated subject, trace ID, request path, and JSON old/new scalar values. Modified records contain only properties marked as changed. Properties decorated with `[AuditIgnore]` are excluded. `AuditLog` itself does not implement the marker and cannot recursively audit itself.
 
-Auditable entities must assign their primary keys before `SaveChanges`; the template uses application-generated GUIDs. Audit records are persistence data and are not exposed through a default HTTP endpoint.
+Auditable entities must have their primary keys assigned before `SaveChanges`; the template leaves `Id` unset and lets EF Core generate a sequential GUID client-side when the entity is added, as described in ADR-0006. Audit records are persistence data and are not exposed through a default HTTP endpoint.
 
 ## Consequences
 

@@ -19,3 +19,4 @@ Architecture Decision Records (ADRs) capture decisions that materially affect th
 | [0003](0003-use-time-provider-and-utc-timestamps.md) | Accepted | Use TimeProvider and require UTC timestamps |
 | [0004](0004-localize-api-errors.md) | Accepted | Localize API errors through Accept-Language |
 | [0005](0005-soft-delete-opt-in-entities.md) | Accepted | Soft-delete opt-in entities with a global query filter |
+| [0006](0006-use-sequential-guid-keys.md) | Accepted | Use client-generated sequential GUID keys |

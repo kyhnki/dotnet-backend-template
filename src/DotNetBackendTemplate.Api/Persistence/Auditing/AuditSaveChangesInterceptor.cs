@@ -102,7 +102,6 @@ internal sealed class AuditSaveChangesInterceptor(
 
         return new AuditLog
         {
-            Id = Guid.NewGuid(),
             OccurredAtUtc = occurredAtUtc,
             Action = action,
             EntityName = entry.Metadata.ClrType.Name,

@@ -139,7 +139,7 @@ The design-time factory reads the database connection from user secrets or `Conn
 
 EF Core writes an `AuditLog` row in the same transaction whenever an entity implementing `IAuditableEntity` is added, modified, or deleted. `Campaign` opts in by default. Records include the action, entity and key, authenticated subject, trace ID, request path, and JSON old/new values.
 
-Use `[AuditIgnore]` on secrets, tokens, large values, and personal data that does not belong in the audit trail. Auditable entities must assign their keys before `SaveChanges`; application-generated GUIDs are the template default. Audit records are intentionally not exposed through an API endpoint. Define retention rules and restrict direct table access before production use.
+Use `[AuditIgnore]` on secrets, tokens, large values, and personal data that does not belong in the audit trail. Auditable entities must have their keys assigned before `SaveChanges`. Leave `Id` unset on new entities: EF Core generates a sequential GUID client-side when the entity is added, which keeps the key available for auditing and stops the clustered primary key from fragmenting. Do not reintroduce `Guid.NewGuid()` or a database-generated key on an auditable entity — see [ADR-0006](docs/adr/0006-use-sequential-guid-keys.md). Audit records are intentionally not exposed through an API endpoint. Define retention rules and restrict direct table access before production use.
 
 ## Soft delete
 

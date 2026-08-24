@@ -182,6 +182,41 @@ public sealed class CampaignEndpointsTests(ApiFactory factory) : IClassFixture<A
     }
 
     [Fact]
+    public async Task GeneratedKeysSortInCreationOrderInSqlServer()
+    {
+        // Entity keys are left unset so EF assigns sequential GUIDs ordered for SQL Server's
+        // uniqueidentifier comparison, which keeps the clustered primary key from fragmenting on
+        // insert. Ordering is evaluated by SQL Server, so this asserts the property directly
+        // rather than an implementation detail.
+        using HttpClient client = factory.CreateAuthenticatedClient();
+        string prefix = $"Ordered {Guid.NewGuid():N}";
+        List<Guid> createdInOrder = [];
+
+        for (int index = 0; index < 5; index++)
+        {
+            HttpResponseMessage response = await client.PostAsJsonAsync(
+                "/api/v1/campaigns",
+                ValidRequest($"{prefix} {index}"));
+            CreateCampaign.Response? created = await response.Content
+                .ReadFromJsonAsync<CreateCampaign.Response>(JsonOptions);
+
+            created.Should().NotBeNull();
+            createdInOrder.Add(created!.Id);
+        }
+
+        using IServiceScope scope = factory.Services.CreateScope();
+        AppDbContext dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        List<Guid> sortedByKey = await dbContext.Campaigns
+            .AsNoTracking()
+            .Where(campaign => campaign.Name.StartsWith(prefix))
+            .OrderBy(campaign => campaign.Id)
+            .Select(campaign => campaign.Id)
+            .ToListAsync();
+
+        sortedByKey.Should().Equal(createdInOrder);
+    }
+
+    [Fact]
     public async Task DeleteCampaignSoftDeletesAndHidesItFromQueries()
     {
         using HttpClient client = factory.CreateAuthenticatedClient();

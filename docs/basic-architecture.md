@@ -13,7 +13,7 @@ HTTP endpoint
                     -> SQL Server
 ```
 
-[Request pipeline](request-pipeline.md) traces a single request through every station of that path, middleware included, with the early-exit paths for `400`, `401`, `403`, and `500`.
+[Request pipeline](request-pipeline.md) traces a single request through every steps of that path, middleware included, with the early-exit paths for `400`, `401`, `403`, and `500`.
 
 ```text
 src/DotNetBackendTemplate.Api

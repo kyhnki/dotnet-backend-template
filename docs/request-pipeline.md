@@ -1,7 +1,7 @@
 # Request pipeline
 
 This traces one request, `POST /api/v1/campaigns`, from the client to `201 Created`, naming every
-station it passes through. [Basic Architecture](basic-architecture.md) summarises the same path in
+steps it passes through. [Basic Architecture](basic-architecture.md) summarises the same path in
 five lines; this document is the detailed version.
 
 Every other endpoint follows the same shape. Only the slice at the centre changes.
@@ -83,9 +83,9 @@ sequenceDiagram
     SQL-->>H: rows written
 ```
 
-## Stations
+## Steps
 
-| Station | Source |
+| Step | Source |
 |---|---|
 | Endpoint routing (implicit) | added by `WebApplication` before the middleware in [Program.cs](../src/DotNetBackendTemplate.Api/Program.cs) |
 | Request localization | [Program.cs](../src/DotNetBackendTemplate.Api/Program.cs), configured in [ServiceCollectionExtensions.cs](../src/DotNetBackendTemplate.Api/Common/Extensions/ServiceCollectionExtensions.cs) |

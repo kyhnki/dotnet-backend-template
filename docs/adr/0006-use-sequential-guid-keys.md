@@ -20,6 +20,8 @@ Do not use `NEWSEQUENTIALID()` or any other database-generated default on audita
 
 Do not use `Guid.CreateVersion7()` on SQL Server. UUIDv7 places its timestamp in the leading bytes, while SQL Server compares `uniqueidentifier` values starting from the last six bytes, so v7 values are not sequential in the order that actually governs the clustered index. UUIDv7 would be the right answer on PostgreSQL.
 
+The ordering this decision depends on is verified rather than assumed: `GeneratedKeysSortInCreationOrderInSqlServer` creates rows in sequence and has SQL Server sort them with `ORDER BY Id`, asserting they come back in creation order.
+
 ## Consequences
 
 - Inserts append to the end of the clustered index instead of scattering, so the primary key stops fragmenting.
@@ -27,7 +29,7 @@ Do not use `Guid.CreateVersion7()` on SQL Server. UUIDv7 places its timestamp in
 - Key generation stays client-side, so auditing, the `Created` location header, and any code reading the key immediately after `Add` keep working.
 - The generation strategy is now EF Core's rather than the application's. Re-introducing an explicit `Id = Guid.NewGuid()` on an entity silently restores the fragmentation this decision removes.
 - The ordering guarantee is provider-specific. Moving off SQL Server means revisiting this decision; on PostgreSQL, UUIDv7 becomes the correct choice.
-- Keys are 16 bytes rather than 4, and that width is repeated in every nonclustered index. This is accepted for the audit and enumeration properties above.
+- Keys are 16 bytes rather than the 4 or 8 an integer key would need. SQL Server carries the clustered key into every nonclustered index, so the extra width repeats per index, fits fewer rows per page, and costs additional logical reads. Sequential generation removes the fragmentation cost of GUID keys but not this one, and a read-heavy schema with many indexes is where it shows up. This is accepted for the audit and enumeration properties above.
 
 ## Alternatives considered
 
@@ -35,3 +37,4 @@ Do not use `Guid.CreateVersion7()` on SQL Server. UUIDv7 places its timestamp in
 - Keeping `Guid.NewGuid()` was rejected once a no-cost alternative existed; it produced random values as a clustered key for no benefit.
 - `Guid.CreateVersion7()` was rejected on SQL Server for the byte-ordering reason above.
 - A non-clustered primary key with the clustered index moved to another column was rejected as more schema complexity than the problem warrants at this size.
+- A `BIGINT` identity clustered primary key alongside a separate `uniqueidentifier` column as the external identifier was deferred rather than dismissed. It is the one design that answers both objections at once: storage keeps a narrow key, the API still exposes an opaque non-enumerable ID, and because the GUID is assigned client-side it can serve as the audit `EntityId` while the integer key is still unknown before `SaveChanges`. It costs two identity columns on every auditable entity, a second unique index, and lookup-key mapping in every query, endpoint, and response — disproportionate for a template of this size. Revisit it when row counts or index breadth make key width measurable, which is the point at which the trade reverses.

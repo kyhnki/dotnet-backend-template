@@ -46,6 +46,14 @@ internal static class ArchitectureAssert
             subject,
             reported);
     }
+
+    /// <summary>Asserts that a heuristic rule does not flag a case it must accept.</summary>
+    public static void DoesNotReport(IEnumerable<ArchitectureViolation> violations, string ruleId, string subject) =>
+        violations.Should().NotContain(
+            violation => violation.RuleId == ruleId && violation.Subject.Contains(subject, StringComparison.Ordinal),
+            "{0} must not flag {1}",
+            ruleId,
+            subject);
 }
 
 internal static class Namespaces

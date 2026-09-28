@@ -38,7 +38,7 @@ public sealed class EndpointRulesTests(ProductionEndpoints production) : IClassF
         ArchitectureAssert.NoViolations(
             EndpointRules.Check(endpoints, ProductionCode.RootNamespace)
                 .Concat(await EndpointRules.CheckPoliciesAsync(endpoints, policies))
-                .Concat(EndpointRules.CheckRegistration(ProductionCode.Assembly.GetTypes(), endpoints, ProductionCode.RootNamespace)));
+                .Concat(await EndpointRules.CheckRegistrationAsync(ProductionCode.Assembly.GetTypes(), endpoints, ProductionCode.RootNamespace)));
     }
 
     [Theory]
@@ -65,7 +65,7 @@ public sealed class EndpointRulesTests(ProductionEndpoints production) : IClassF
         [
             .. EndpointRules.Check(endpoints, FixtureRoot.Namespace),
             .. await EndpointRules.CheckPoliciesAsync(endpoints, app.Services.GetRequiredService<IAuthorizationPolicyProvider>()),
-            .. EndpointRules.CheckRegistration(fixtureTypes, endpoints, FixtureRoot.Namespace),
+            .. await EndpointRules.CheckRegistrationAsync(fixtureTypes, endpoints, FixtureRoot.Namespace),
         ];
 
         ArchitectureAssert.Reports(violations, ruleId, subject);
@@ -219,23 +219,46 @@ internal static class EndpointRules
     }
 
     /// <summary>SLICE-08: a slice whose MapEndpoint is never called has no endpoint, and nothing else notices.</summary>
-    public static IEnumerable<ArchitectureViolation> CheckRegistration(IEnumerable<Type> types, IEnumerable<Endpoint> endpoints, string root)
+    public static async Task<IReadOnlyList<ArchitectureViolation>> CheckRegistrationAsync(IEnumerable<Type> types, IEnumerable<Endpoint> endpoints, string root)
     {
-        HashSet<Type> mapped = [.. endpoints
-            .Select(endpoint => endpoint.Metadata.GetMetadata<MethodInfo>()?.DeclaringType)
-            .OfType<Type>()
-            .Select(WrittenType)];
+        List<ArchitectureViolation> violations = [];
+        List<Endpoint> mapped = [.. endpoints];
 
         foreach (Type slice in types.Where(type => Namespaces.IsWithin(type.Namespace, $"{root}.Features")))
         {
-            bool mapsEndpoint = slice.GetMethod("MapEndpoint", BindingFlags.Public | BindingFlags.Static) is not null;
-            if (mapsEndpoint && !mapped.Contains(slice))
+            MethodInfo? mapping = slice.GetMethod("MapEndpoint", BindingFlags.Public | BindingFlags.Static);
+            if (mapping is null)
             {
-                yield return new("SLICE-08", slice.FullName!,
-                    "defines MapEndpoint, but no mapped endpoint uses its handler. Call it from EndpointRouteBuilderExtensions.");
+                continue;
+            }
+
+            if (mapping.GetParameters() is not [{ ParameterType: var parameterType }] || parameterType != typeof(RouteGroupBuilder))
+            {
+                violations.Add(new("SLICE-08", slice.FullName!, "MapEndpoint must take one RouteGroupBuilder; review a different mapping convention explicitly."));
+                continue;
+            }
+
+            WebApplicationBuilder builder = WebApplication.CreateSlimBuilder();
+            // Endpoint construction only checks service registration; no handler or database is executed.
+            builder.Services.AddSingleton<MediatR.ISender>(_ => throw new InvalidOperationException("Mapping probes never dispatch requests."));
+            await using WebApplication probe = builder.Build();
+            mapping.Invoke(null, [probe.MapGroup(string.Empty)]);
+            List<Endpoint> expected = [.. ((IEndpointRouteBuilder)probe).DataSources.SelectMany(source => source.Endpoints)];
+            if (expected.Count == 0 || expected.Any(candidate => !mapped.Any(actual => SameHandler(candidate, actual))))
+            {
+                violations.Add(new("SLICE-08", slice.FullName!,
+                    "defines MapEndpoint, but its handler/HTTP-method identities are absent from the application. Register every mapped operation; the delegate may live in a separate top-level type."));
             }
         }
+
+        return violations;
     }
+
+    private static bool SameHandler(Endpoint expected, Endpoint actual) =>
+        expected.Metadata.GetMetadata<MethodInfo>() is { } method
+        && method == actual.Metadata.GetMetadata<MethodInfo>()
+        && (expected.Metadata.GetMetadata<IHttpMethodMetadata>()?.HttpMethods ?? [])
+            .SequenceEqual(actual.Metadata.GetMetadata<IHttpMethodMetadata>()?.HttpMethods ?? [], StringComparer.Ordinal);
 
     private static List<string> MissingDocumentation(EndpointMetadataCollection metadata)
     {
@@ -310,18 +333,6 @@ internal static class EndpointRules
                 }
             }
         }
-    }
-
-    /// <summary>Maps a compiler-generated closure back to the type the developer wrote.</summary>
-    private static Type WrittenType(Type type)
-    {
-        Type current = type;
-        while (current.Name.StartsWith('<') && current.DeclaringType is { } declaring)
-        {
-            current = declaring;
-        }
-
-        return current;
     }
 
     private static bool IsDatabaseAccess(Type type) =>

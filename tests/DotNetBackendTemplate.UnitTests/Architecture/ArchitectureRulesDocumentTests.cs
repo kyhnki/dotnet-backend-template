@@ -4,8 +4,7 @@ using System.Text.RegularExpressions;
 namespace DotNetBackendTemplate.UnitTests.Architecture;
 
 /// <summary>
-/// DOC-01: docs/architecture-rules.md and the architecture tests describe the same rules. Without this check the
-/// enforcement matrix drifts the first time a rule is added, renamed, or dropped on only one side.
+/// DOC-01: checks the textual document/test inventory. It does not prove test execution or semantic coverage.
 /// </summary>
 public sealed class ArchitectureRulesDocumentTests
 {
@@ -36,6 +35,15 @@ public sealed class ArchitectureRulesDocumentTests
     [Fact]
     public void DocumentRuleCatchesMissingTestClass() =>
         ArchitectureAssert.Reports(RulesDocument.Check(DriftedDocument, DriftedTests), "DOC-01", "GhostRulesTests");
+
+    [Fact]
+    public void DocumentInventoryAcceptsPartialChecks()
+    {
+        string id = FakeId(1);
+        string document = $"- **{id}:** A scoped check.\n### Enforcement matrix\n| {id} | Partial test + review | `RealRulesTests` |\n";
+        string source = $$"""class RealRulesTests { void Check() => Report("{{id}}"); }""";
+        RulesDocument.Check(document, source).Should().BeEmpty();
+    }
 
     private const string DriftedDocument = """
         - **ZZZ-01:** Enforced and listed.
@@ -78,7 +86,8 @@ internal static partial class RulesDocument
             .Concat(TableDefinition().Matches(definitions).Select(match => match.Groups["id"].Value))];
         HashSet<string> listed = [.. RuleId().Matches(matrix).Select(match => match.Value)];
         HashSet<string> claimed = [.. MatrixRow().Matches(matrix)
-            .Where(row => row.Groups["enforcement"].Value.TrimStart().StartsWith("Test", StringComparison.Ordinal))
+            .Where(row => row.Groups["enforcement"].Value.TrimStart().StartsWith("Test", StringComparison.Ordinal)
+                || row.Groups["enforcement"].Value.TrimStart().StartsWith("Partial test", StringComparison.Ordinal))
             .SelectMany(row => RuleId().Matches(row.Groups["rules"].Value).Select(match => match.Value))];
         HashSet<string> checkedByTests = [.. QuotedRuleId().Matches(testSources).Select(match => match.Groups["id"].Value)];
 
@@ -99,7 +108,7 @@ internal static partial class RulesDocument
 
         foreach (string id in checkedByTests.Intersect(defined).Except(claimed).Order(StringComparer.Ordinal))
         {
-            yield return new("DOC-01", id, "is checked by an architecture test, but its matrix row does not start with Test.");
+            yield return new("DOC-01", id, "appears in the test inventory, but its matrix row does not start with Test or Partial test.");
         }
 
         foreach (string name in TestClassName().Matches(matrix).Select(match => match.Groups["name"].Value).Distinct())

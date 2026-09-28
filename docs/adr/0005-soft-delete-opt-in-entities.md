@@ -32,7 +32,7 @@ Do not add `DeletedBy`. The audit row's `UserId` already answers who.
 - Unique indexes on a soft-deletable entity must be filtered with `HasFilter("[IsDeleted] = 0")`, or a deleted row permanently reserves its unique value. Indexes serving normal reads should be filtered the same way to match the query filter.
 - Deleted rows accumulate. Retention and purge policy become an operational requirement, not an optional one.
 - Soft delete does not satisfy an erasure request. A real "delete my data" path needs a hard delete that bypasses this mechanism.
-- Required relationships between filtered and unfiltered entities produce EF Core warnings; with warnings as errors, the interface must be applied consistently across a relationship.
+- A required relationship from an unfiltered dependent to a filtered principal makes EF Core log a warning at runtime, not at build time, so `TreatWarningsAsErrors` does not catch it. PERS-16 in docs/architecture-rules.md enforces it with a model test instead, and PERS-15 forbids cascade delete from a soft-deletable principal to a dependent that would be hard-deleted.
 - `AuditLog` must never implement `ISoftDeletable`; audit rows are immutable records, not business data.
 
 ## Alternatives considered

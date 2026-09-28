@@ -1,6 +1,6 @@
+using DotNet.Testcontainers.Containers;
 using DotNetBackendTemplate.Api.Infrastructure.Authorization;
 using DotNetBackendTemplate.Api.Persistence;
-using DotNet.Testcontainers.Containers;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;

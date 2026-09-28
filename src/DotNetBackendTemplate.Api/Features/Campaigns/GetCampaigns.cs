@@ -51,7 +51,7 @@ public static class GetCampaigns
                 .Select(campaign => new Item(
                     campaign.Id,
                     campaign.Name,
-                    campaign.Status,
+                    campaign.Status.ToContract(),
                     campaign.StartsAtUtc,
                     campaign.EndsAtUtc))
                 .ToListAsync(cancellationToken);

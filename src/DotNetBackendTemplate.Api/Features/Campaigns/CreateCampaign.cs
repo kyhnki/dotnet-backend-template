@@ -6,6 +6,7 @@ using FluentValidation;
 using MediatR;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.Extensions.Localization;
+using EntityCampaignStatus = DotNetBackendTemplate.Api.Persistence.Entities.CampaignStatus;
 
 namespace DotNetBackendTemplate.Api.Features.Campaigns;
 
@@ -59,7 +60,7 @@ public static class CreateCampaign
                 Name = request.Name.Trim(),
                 StartsAtUtc = request.StartsAtUtc,
                 EndsAtUtc = request.EndsAtUtc,
-                Status = CampaignStatus.Draft,
+                Status = EntityCampaignStatus.Draft,
                 CreatedAtUtc = timeProvider.GetUtcNow(),
             };
 

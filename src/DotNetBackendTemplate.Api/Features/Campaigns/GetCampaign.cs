@@ -1,5 +1,4 @@
 using DotNetBackendTemplate.Api.Persistence;
-using DotNetBackendTemplate.Api.Persistence.Entities;
 using MediatR;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.EntityFrameworkCore;
@@ -29,7 +28,7 @@ public static class GetCampaign
                     campaign.Name,
                     campaign.StartsAtUtc,
                     campaign.EndsAtUtc,
-                    campaign.Status))
+                    campaign.Status.ToContract()))
                 .SingleOrDefaultAsync(cancellationToken);
     }
 

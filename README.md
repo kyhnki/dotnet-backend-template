@@ -187,4 +187,4 @@ Serilog provides structured console and request logs. OpenTelemetry instruments 
 - Configure the real identity provider, audience, authorization policies, telemetry destination.
 - Review package versions, secret management, data retention, and deployment migration strategy.
 
-See [docs/architecture.md](docs/architecture.md) for dependency rules and [docs/adr](docs/adr/README.md) for architecture decision records covering the hybrid structure, transactional audit logs, UTC clock policy, and API localization.
+See the [architecture overview](docs/basic-architecture.md), [architecture rules and review checklist](docs/architecture-rules.md), and [architecture decision records](docs/adr/README.md) for the starter's structure, dependency boundaries, and accepted design decisions.

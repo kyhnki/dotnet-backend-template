@@ -13,6 +13,9 @@ namespace DotNetBackendTemplate.UnitTests.Architecture;
 /// </summary>
 public sealed class MethodCallRulesTests
 {
+    // Exact IL method identity (return type, declaring type, name and parameters), never a namespace wildcard.
+    private static readonly IReadOnlyList<ReviewedMethodException> ReviewedExceptions = [];
+
     /// <summary>
     /// Reviewed read paths allowed to see soft-deleted rows (PERS-07). Add an entry as
     /// <c>[typeof(SomeHandler).FullName!] = "why it may see deleted rows, and the ADR that records it"</c>.
@@ -27,11 +30,22 @@ public sealed class MethodCallRulesTests
         // Without call sites, or without the handlers the CQRS checks inspect, these rules would pass vacuously.
         sites.Should().Contain(site => Namespaces.IsWithin(site.CallerNamespace, ProductionCode.RootNamespace));
 
+        foreach (ReviewedMethodException exception in ReviewedExceptions)
+        {
+            exception.IsComplete.Should().BeTrue("exceptions need an exact method, rationale, ADR and behavior-test reference");
+            sites.Should().Contain(site => site.CallerMethod == exception.Method, "stale or wildcard exemptions must not remain");
+            exception.Adr.Should().StartWith("docs/adr/");
+            File.Exists(Path.Combine(ProductionCode.RepositoryRoot, exception.Adr)).Should().BeTrue();
+            string[] testSources = Directory.GetFiles(Path.Combine(ProductionCode.RepositoryRoot, "tests"), "*.cs", SearchOption.AllDirectories);
+            testSources.Should().Contain(path => File.ReadAllText(path).Contains(exception.BehaviorTest + "(", StringComparison.Ordinal),
+                "the referenced behavior test must exist; review verifies it actually covers this exception");
+        }
+
         ArchitectureAssert.NoViolations(MethodCallRules.Check(
             sites,
             ProductionCode.Assembly.GetTypes(),
             ProductionCode.RootNamespace,
-            IgnoreQueryFiltersAllowlist.Keys.ToHashSet(StringComparer.Ordinal)));
+            IgnoreQueryFiltersAllowlist.Keys.ToHashSet(StringComparer.Ordinal), ReviewedExceptions));
     }
 
     [Theory]
@@ -67,7 +81,7 @@ public sealed class MethodCallRulesTests
 }
 
 /// <summary>One call instruction, attributed to the type the developer wrote rather than a compiler-generated one.</summary>
-internal sealed record CallSite(string Caller, string CallerNamespace, string CalleeType, string CalleeName)
+internal sealed record CallSite(string Caller, string CallerNamespace, string CalleeType, string CalleeName, string CallerMethod = "")
 {
     public bool Is(string calleeType, params string[] names) => CalleeType == calleeType && names.Contains(CalleeName);
 
@@ -94,7 +108,8 @@ internal static class CallSites
                 {
                     if (instruction.Operand is MethodReference callee && IsCall(instruction.OpCode))
                     {
-                        sites.Add(new(caller, callerNamespace, callee.DeclaringType.GetElementType().FullName, callee.Name));
+                        sites.Add(new(caller, callerNamespace, callee.DeclaringType.GetElementType().FullName, callee.Name,
+                            WrittenMethod(type, method, written).FullName));
                     }
                 }
             }
@@ -106,6 +121,18 @@ internal static class CallSites
     private static bool IsCall(OpCode opCode) =>
         opCode == OpCodes.Call || opCode == OpCodes.Callvirt || opCode == OpCodes.Newobj
         || opCode == OpCodes.Ldftn || opCode == OpCodes.Ldvirtftn;
+
+    private static MethodDefinition WrittenMethod(TypeDefinition type, MethodDefinition method, TypeDefinition written)
+    {
+        // State-machine ownership is unambiguous even for overloaded Handle methods.
+        MethodDefinition? original = written.Methods.FirstOrDefault(candidate => candidate.CustomAttributes.Any(attribute =>
+            attribute.AttributeType.FullName == "System.Runtime.CompilerServices.AsyncStateMachineAttribute"
+            && attribute.ConstructorArguments.Count == 1
+            && attribute.ConstructorArguments[0].Value is TypeReference stateMachine
+            && stateMachine.FullName == type.FullName));
+        // Closures retain their exact generated method identity: they never inherit an enclosing method exemption.
+        return original ?? method;
+    }
 
     /// <summary>Async state machines and closures are nested types whose names start with '&lt;'.</summary>
     private static TypeDefinition WrittenType(TypeDefinition type)
@@ -139,13 +166,17 @@ internal static class MethodCallRules
         IReadOnlyList<CallSite> sites,
         IEnumerable<Type> types,
         string root,
-        IReadOnlySet<string> ignoreQueryFiltersAllowlist)
+        IReadOnlySet<string> ignoreQueryFiltersAllowlist,
+        IReadOnlyList<ReviewedMethodException>? reviewedExceptions = null)
     {
         List<CallSite> owned = [.. sites.Where(site => Namespaces.IsWithin(site.CallerNamespace, root))];
         string features = $"{root}.Features";
         string persistence = $"{root}.Persistence";
 
-        foreach (CallSite site in owned.DistinctBy(site => (site.Caller, site.CalleeType, site.CalleeName)))
+        bool IsReviewed(string rule, string method) => reviewedExceptions?.Any(exception =>
+            exception.RuleId == rule && exception.Method == method && exception.IsComplete) == true;
+
+        foreach (CallSite site in owned.DistinctBy(site => (site.CallerMethod, site.Caller, site.CalleeType, site.CalleeName)))
         {
             string ns = site.CallerNamespace;
 
@@ -155,7 +186,8 @@ internal static class MethodCallRules
             }
 
             if (site.Is("System.Guid", "NewGuid", "CreateVersion7")
-                && (Namespaces.IsWithin(ns, features) || Namespaces.IsWithin(ns, persistence)))
+                && (Namespaces.IsWithin(ns, features) || Namespaces.IsWithin(ns, persistence))
+                && !IsReviewed("PERS-05", site.CallerMethod))
             {
                 yield return new("PERS-05", site.Caller,
                     $"calls Guid.{site.CalleeName}. Leave entity keys unset so EF assigns SQL Server-ordered GUIDs (ADR-0006).");
@@ -189,13 +221,13 @@ internal static class MethodCallRules
             }
         }
 
-        foreach (IGrouping<string, CallSite> caller in owned.GroupBy(site => site.Caller))
+        foreach (IGrouping<string, CallSite> caller in owned.GroupBy(site => site.CallerMethod))
         {
             if (caller.Any(site => site.IsEntityFramework("BeginTransaction", "BeginTransactionAsync"))
-                && !caller.Any(site => site.CalleeName == "CreateExecutionStrategy"))
+                && !IsReviewed("PERS-18", caller.Key))
             {
                 yield return new("PERS-18", caller.Key,
-                    "opens a transaction outside the execution strategy. EnableRetryOnFailure rejects that at runtime; wrap the work in Database.CreateExecutionStrategy().ExecuteAsync.");
+                    "opens an explicit transaction without a reviewed method exception. Review the execution-strategy scope and supply an ADR and rollback test; merely creating a strategy proves nothing.");
             }
         }
 
@@ -204,6 +236,11 @@ internal static class MethodCallRules
         {
             List<CallSite> calls = [.. callsByCaller[handler.FullName!]];
             int saves = calls.Count(IsSaveChanges);
+
+            if (!request.Name.EndsWith("Query", StringComparison.Ordinal) && !request.Name.EndsWith("Command", StringComparison.Ordinal))
+            {
+                yield return new("SLICE-03", handler.FullName!, "handles a request whose name must end with Command or Query. The suffix declares its CQRS intent; review verifies its actual behavior.");
+            }
 
             if (request.Name.EndsWith("Query", StringComparison.Ordinal))
             {
@@ -217,10 +254,17 @@ internal static class MethodCallRules
                     yield return new("SLICE-03", handler.FullName!, "is a query handler but never calls AsNoTracking.");
                 }
             }
-            else if (saves > 1 && !calls.Any(site => site.CalleeName == "CreateExecutionStrategy"))
+            else
             {
-                yield return new("PERS-19", handler.FullName!,
-                    $"calls SaveChanges {saves} times. Each call is its own transaction, so a failure between them leaves business rows and audit rows half-written. Save once, or use an execution-strategy transaction.");
+                foreach (IGrouping<string, CallSite> method in calls.GroupBy(site => site.CallerMethod))
+                {
+                    int methodSaves = method.Count(IsSaveChanges);
+                    if (methodSaves > 1 && !IsReviewed("PERS-19", method.Key))
+                    {
+                        yield return new("PERS-19", handler.FullName!,
+                            $"method {method.Key} has {methodSaves} SaveChanges call sites. Save once, or record a method-scoped exception with an ADR and atomicity test. Call-site counts are not execution counts.");
+                    }
+                }
             }
         }
     }
@@ -235,4 +279,11 @@ internal static class MethodCallRules
                 && (contract.GetGenericTypeDefinition() == typeof(IRequestHandler<,>)
                     || contract.GetGenericTypeDefinition() == typeof(IRequestHandler<>)))
             .Select(contract => (type, contract.GetGenericArguments()[0])));
+}
+
+internal sealed record ReviewedMethodException(string RuleId, string Method, string Reason, string Adr, string BehaviorTest)
+{
+    public bool IsComplete => !string.IsNullOrWhiteSpace(Method) && !string.IsNullOrWhiteSpace(Reason)
+        && !string.IsNullOrWhiteSpace(Adr) && !string.IsNullOrWhiteSpace(BehaviorTest)
+        && !Method.Contains('*', StringComparison.Ordinal);
 }

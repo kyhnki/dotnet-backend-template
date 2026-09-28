@@ -1,3 +1,4 @@
+using System.Linq.Expressions;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using DotNetBackendTemplate.Api.Persistence;
@@ -160,7 +161,7 @@ internal static partial class PersistenceModelRules
             if (clrType.IsEnum && providerType != typeof(string))
             {
                 yield return new("PERS-13", subject,
-                    $"stores enum {property.Name} as {providerType.Name}. Use HasConversion<string>() so renaming or reordering members cannot silently change stored meaning.");
+                    $"stores enum {property.Name} as {providerType.Name}. Use HasConversion<string>(); names become persisted values, so renaming needs a data migration or compatible mapping.");
             }
 
             // GetColumnType() falls back to the provider's resolved store type, nvarchar(max) for an unbounded string,
@@ -246,15 +247,15 @@ internal static partial class PersistenceModelRules
 
     private static IEnumerable<ArchitectureViolation> CheckSoftDelete(IEntityType entity, string subject)
     {
-        if (!HasQueryFilter(entity))
+        if (!entity.GetDeclaredQueryFilters().Any(filter => filter.Expression is { } expression && RequiresActiveRow(expression)))
         {
             yield return new("PERS-06", subject,
-                "implements ISoftDeletable but has no global query filter, so deleted rows would appear in every query.");
+                "needs a recognized mandatory !IsDeleted (or IsDeleted == false) query-filter condition. Unknown expressions require review; an unrelated filter does not protect deleted rows.");
         }
 
         foreach (IIndex index in entity.GetIndexes().Where(index => index.IsUnique))
         {
-            if (index.GetFilter()?.Contains(nameof(ISoftDeletable.IsDeleted), StringComparison.Ordinal) != true)
+            if (!IsActiveRowIndexFilter(index.GetFilter()))
             {
                 string columns = string.Join(", ", index.Properties.Select(property => property.Name));
                 yield return new("PERS-08", subject,
@@ -264,6 +265,27 @@ internal static partial class PersistenceModelRules
     }
 
     private static bool HasQueryFilter(IEntityType entity) => entity.GetDeclaredQueryFilters().Count > 0;
+
+    internal static bool IsActiveRowIndexFilter(string? filter) => filter is not null
+        && Regex.Replace(filter, @"[\s()]", string.Empty) == "[IsDeleted]=0";
+
+    internal static bool RequiresActiveRow(LambdaExpression filter) =>
+        filter.Parameters.Count == 1 && RequiresActiveRow(filter.Body, filter.Parameters[0]);
+
+    private static bool RequiresActiveRow(Expression expression, ParameterExpression entity) => expression switch
+    {
+        UnaryExpression { NodeType: ExpressionType.Not } not => IsDeletedMember(not.Operand, entity),
+        BinaryExpression { NodeType: ExpressionType.Equal } equal =>
+            (IsDeletedMember(equal.Left, entity) && equal.Right is ConstantExpression { Value: false })
+            || (IsDeletedMember(equal.Right, entity) && equal.Left is ConstantExpression { Value: false }),
+        BinaryExpression { NodeType: ExpressionType.AndAlso } and =>
+            RequiresActiveRow(and.Left, entity) || RequiresActiveRow(and.Right, entity),
+        _ => false,
+    };
+
+    private static bool IsDeletedMember(Expression expression, ParameterExpression entity) =>
+        expression is MemberExpression { Member.Name: nameof(ISoftDeletable.IsDeleted) } member
+        && member.Expression == entity && member.Type == typeof(bool);
 
     // A heuristic: a name match is a prompt to decide, and [AuditIgnore] records the decision.
     [GeneratedRegex("password|secret|token|apikey|privatekey|connectionstring", RegexOptions.IgnoreCase)]

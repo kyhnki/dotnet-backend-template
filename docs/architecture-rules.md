@@ -8,7 +8,7 @@ These are conventions inside one assembly, not compiler-enforced project boundar
 
 Rules apply to production code under `src/DotNetBackendTemplate.Api`. Test fixtures may reference production areas and replace infrastructure. Generated migrations remain subject to schema review but are excluded from hand-written-code placement checks.
 
-**Enforcement status:** rules marked *Test* in the [enforcement matrix](#enforcement-matrix) fail `dotnet test` when violated, and every failure names the rule it broke. Rules marked *Analyzer* fail the build, rules marked *Runtime tests* are covered by behavior tests, and rules marked *Review* cannot be proven structurally. Passing the tests therefore does not prove full architectural compliance; see [what automation cannot prove](#responsibility-review-what-automation-cannot-prove).
+**Enforcement status:** the [enforcement matrix](#enforcement-matrix) separates *Test* (automated within the stated scope), *Partial test + review* (heuristics or incomplete structural coverage), *Analyzer*, *Runtime tests* (the exercised scenarios), and *Review*. A passing partial check is not proof of the whole rule. Failures identify the rule; passing all checks does not prove full architectural compliance. See [what automation cannot prove](#responsibility-review-what-automation-cannot-prove).
 
 ## 1. Decide ownership by responsibility
 
@@ -73,7 +73,7 @@ Keep exceptions specific to a responsibility or type. Do not exclude an entire n
 - **SLICE-05:** Pass cancellation tokens to asynchronous persistence and dispatch operations. List operations must be bounded; the campaign example clamps page size to `1..100`.
 - **SLICE-06:** Keep validation in the FluentValidation pipeline and request timing/logging in generic behaviors. Business invariants involving persisted state still need handler-level decisions and appropriate database constraints; input validators are not a substitute for concurrency-safe enforcement. Updates are last-write-wins by decision until an entity adopts optimistic concurrency ([ADR-0007](adr/0007-accept-last-write-wins-updates.md)).
 - **SLICE-07:** Every business endpoint under `/api` declares a stable name (`WithName`), a tag, a summary, a description, and response metadata, so the OpenAPI document describes it. Each contract type gets its own schema, and the documented schema must match the type the endpoint binds or returns.
-- **SLICE-08:** Every slice that defines `MapEndpoint` is registered in `EndpointRouteBuilderExtensions`. An unregistered slice has no endpoint, and nothing else notices.
+- **SLICE-08:** Every slice that defines public static `MapEndpoint(RouteGroupBuilder)` is registered in `EndpointRouteBuilderExtensions`. Mapping must only declare routes, not perform I/O or business work: tests invoke it in an isolated builder and compare the emitted handler/method identities with the real host. HTTP delegates may be separate top-level types. This does not prove route-prefix or authorization-group correctness; runtime contract tests and review still cover those.
 
 Do not add generic repositories, a custom unit of work, domain events, separate read/write databases, or a generic result abstraction by default. Revisit these choices only for a concrete requirement, recorded in an ADR.
 
@@ -83,21 +83,21 @@ Do not add generic repositories, a custom unit of work, domain events, separate 
 - **PERS-02:** Auditing is opt-in through `IAuditableEntity`. Use the interceptor, not ad hoc handler audit writes. Business changes and audit rows must commit together.
 - **PERS-03:** Exclude secrets, tokens, oversized values, and unnecessary personal data with `[AuditIgnore]`. A property on an auditable entity whose name looks sensitive (password, secret, token, API key, private key, connection string) must carry it; the name check is a heuristic that prompts the decision, and only a person can judge what else is sensitive.
 - **PERS-04:** Do not make `AuditLog` auditable or soft-deletable.
-- **PERS-05:** Auditable keys must be available before saving. Follow [ADR-0006](adr/0006-use-sequential-guid-keys.md): leave new entity IDs unset and let EF generate the SQL Server sequential GUID when adding the entity. Do not introduce explicit random GUIDs or database-generated keys without revisiting the audit/key strategy. An ID is never a replacement for authorization.
-- **PERS-06:** Soft delete is opt-in through `ISoftDeletable`, and every soft-deletable entity has the global query filter. Its interceptor implements the storage mechanism; feature code decides whether deletion is permitted.
+- **PERS-05:** Auditable keys must be available before saving. Follow [ADR-0006](adr/0006-use-sequential-guid-keys.md): leave new entity IDs unset and let EF generate the SQL Server sequential GUID when adding the entity. Do not introduce explicit random GUIDs or database-generated keys without revisiting the audit/key strategy. The call check cannot infer what a GUID is used for: non-key GUID generation is allowed through a reviewed, exact-method exception with rationale, ADR, and behavior-test reference. An ID is never a replacement for authorization.
+- **PERS-06:** Soft delete is opt-in through `ISoftDeletable`, and every soft-deletable entity has a mandatory active-row filter. The checker recognizes `!row.IsDeleted` or `row.IsDeleted == false`, including mandatory `&&` clauses on the filter parameter. Unrelated, optional (`||`), reversed, and unrecognized expressions fail and need review, not a silent exemption. The interceptor implements storage; the feature decides whether deletion is permitted.
 - **PERS-07:** Review every `IgnoreQueryFilters()` use for intent and authorization. It is an exceptional read path, not a convenient fix for a missing record. A reviewed use is added, with its reason, to the allowlist in `MethodCallRulesTests`.
-- **PERS-08:** Follow the active-row unique-index convention for soft-deletable entities: every unique index is filtered to rows that are not deleted.
+- **PERS-08:** Every unique index on a soft-deletable entity uses `[IsDeleted] = 0`. Whitespace and parentheses are normalized; reversed and custom predicates fail for review. Merely containing the word `IsDeleted` is insufficient. Runtime tests verify both active duplicate rejection and value reuse after soft delete.
 - **PERS-09:** Preserve the audit action `Deleted` even though the database operation becomes an update, including on retries.
 - **PERS-10:** Bulk operations such as `ExecuteUpdate`, `ExecuteDelete`, and raw SQL can bypass change tracking and `SaveChanges` interceptors. Do not use them for audited or soft-deletable data without an explicitly reviewed equivalent strategy and tests.
 - **PERS-11:** Every entity type the DbContext maps is declared under `Persistence`.
 - **PERS-12:** The model always matches the latest migration. Add the migration in the same change as the entity or configuration change; since migrations are never applied automatically, a missing one would first surface in production.
-- **PERS-13:** Store enums as strings with `HasConversion<string>()`, so renaming or reordering members cannot silently change the meaning of stored rows.
+- **PERS-13:** Store enums as strings with `HasConversion<string>()` to avoid dependence on numeric ordering. Enum names become persisted values: renaming or removing a member requires a data migration or backward-compatible mapping. String conversion does not make renames safe.
 - **PERS-14:** Give every string column a maximum length, or an explicit `HasColumnType("nvarchar(max)")` when unbounded is intended. An implicit `nvarchar(max)` cannot be indexed.
 - **PERS-15:** Do not cascade-delete from a soft-deletable principal to a dependent that is not soft-deletable: soft-deleting the parent would hard-delete the child.
 - **PERS-16:** A dependent with a required relationship to a soft-deletable, filtered principal needs a query filter too. EF Core reports the mismatch only as a runtime log warning, which `TreatWarningsAsErrors` does not see.
 - **PERS-17:** Auditable entities do not use complex or owned types until the audit interceptor reads them; their values would otherwise be missing from the audit trail.
-- **PERS-18:** Open explicit transactions only inside `Database.CreateExecutionStrategy()`. `EnableRetryOnFailure` rejects a user-initiated transaction outside it at runtime.
-- **PERS-19:** A command handler calls `SaveChanges` once. Each call is its own transaction, so a failure between two calls leaves business and audit rows half-written; use an execution-strategy transaction when more are needed.
+- **PERS-18:** Explicit transactions must execute inside the execution strategy's delegate. Creating a strategy without executing the transaction inside it proves nothing. Direct transaction calls require a reviewed exact-method exception with rationale, ADR, and rollback-test reference.
+- **PERS-19:** A command normally saves once. Multiple saves require an explicitly reviewed shared transaction executed through the execution strategy, plus an exact-method exception and atomicity test. IL call-site counts are not runtime counts: loops, conditional branches, and helper methods remain a review. Strategy creation never exempts a caller automatically.
 
 See [ADR-0002](adr/0002-persist-audit-logs-with-ef-core-interceptor.md) and [ADR-0005](adr/0005-soft-delete-opt-in-entities.md).
 
@@ -131,33 +131,36 @@ See [ADR-0003](adr/0003-use-time-provider-and-utc-timestamps.md) and [ADR-0004](
 | DEP-07 | Test | `NamespaceRulesTests` |
 | SLICE-01 | Test | `SliceRulesTests` |
 | SLICE-02 | Test for database access in endpoint signatures; review for other logic | `EndpointRulesTests` |
-| SLICE-03 | Test | `MethodCallRulesTests` |
-| SLICE-04, SLICE-08 | Test | `EndpointRulesTests` |
+| SLICE-03 | Partial test + review: request suffix, direct saves and presence of a no-tracking call; not all query paths, projections or helper side effects | `MethodCallRulesTests`, `EnforcementRegressionTests` |
+| SLICE-04 | Test for reachable declared contract types; opaque/untyped results need serialization tests and review | `EndpointRulesTests` |
+| SLICE-08 | Partial test + review: handler/HTTP-method identities; not route prefixes or group configuration | `EndpointRulesTests`, `EnforcementRegressionTests` |
 | SLICE-05 | Analyzer (CA2016) for forwarding cancellation tokens; review for bounded lists, with runtime tests for the campaign page-size clamp | `CampaignEndpointsTests` |
 | SLICE-06 | Review | — |
 | SLICE-07 | Test for metadata; runtime test that each operation's schema matches its contract type | `EndpointRulesTests`, `OpenApiContractTests` |
-| PERS-01, PERS-07, PERS-10, PERS-18, PERS-19 | Test | `MethodCallRulesTests` |
-| PERS-02, PERS-09 | Runtime tests | `CampaignEndpointsTests` |
+| PERS-01, PERS-07, PERS-10 | Partial test + review: recognized direct EF calls | `MethodCallRulesTests` |
+| PERS-18, PERS-19 | Partial test + review: exact-method exception gate; transaction scope and runtime save counts are not proven | `MethodCallRulesTests`, `EnforcementRegressionTests` |
+| PERS-02, PERS-09 | Runtime tests: SQL failure rollback and controlled re-entry of SaveChanges; not every provider retry/commit-ambiguity scenario | `CampaignEndpointsTests`, `PersistenceSafetyTests` |
 | PERS-03 | Test for sensitive-looking names (heuristic); what else is sensitive remains a review | `PersistenceModelRulesTests` |
 | PERS-04, PERS-06, PERS-08, PERS-11, PERS-12, PERS-13, PERS-14, PERS-15, PERS-16, PERS-17 | Test | `PersistenceModelRulesTests` |
-| PERS-05 | Test against the EF model and for `Guid.NewGuid()` calls | `PersistenceModelRulesTests`, `MethodCallRulesTests` |
+| PERS-05 | Partial test + review: EF key metadata and GUID calls, with exact-method exceptions for non-key uses | `PersistenceModelRulesTests`, `MethodCallRulesTests`, `EnforcementRegressionTests` |
 | TIME-01 | Test for `TimeProvider.System` outside composition; analyzer (`BannedSymbols.txt`) for the clock APIs | `MethodCallRulesTests` |
 | TIME-02 | Test for `DateTime` in entities and contracts; runtime tests for offsets | `PersistenceModelRulesTests`, `EndpointRulesTests`, `CreateCampaignValidatorTests`, `CampaignEndpointsTests` |
-| TIME-03, SEC-03, SEC-04 | Review | — |
+| TIME-03, SEC-03 | Review | — |
+| SEC-04 | Runtime tests for real JWT issuer, audience, signature, expiry, missing token and role enforcement; secrets and identity ownership remain review | `JwtAuthenticationTests` |
 | LOC-01 | Test for completeness; runtime tests for culture selection | `LocalizationRulesTests`, `CampaignEndpointsTests` |
-| LOC-02, LOC-03 | Test | `LocalizationRulesTests` |
+| LOC-02, LOC-03 | Partial test + review: literal localizer keys with the recognized variable-name pattern and direct literal WithMessage calls only | `LocalizationRulesTests`, `EnforcementRegressionTests` |
 | SEC-01, SEC-06 | Test | `EndpointRulesTests` |
 | SEC-02 | Test for inline roles and for `RequireRole` outside Infrastructure | `EndpointRulesTests`, `MethodCallRulesTests` |
 | SEC-05 | Runtime tests for Problem Details on 400, 401, 403, and 404; log content is a review | `CampaignEndpointsTests`, `OpenApiContractTests` |
 | OPS-01 | Runtime tests | `SwaggerUiTests`, `CampaignEndpointsTests` |
 | OPS-02 | Test | `PackageRulesTests` |
-| DOC-01 | Test | `ArchitectureRulesDocumentTests` |
+| DOC-01 | Test for document/test inventory consistency only | `ArchitectureRulesDocumentTests` |
 
 Section 1 responsibility placement is a review throughout.
 
 ### Architecture tests
 
-The tests live in `tests/DotNetBackendTemplate.UnitTests/Architecture` and need neither Docker nor a database. Each rule is a check that runs twice: against the production code, where it must report nothing, and against a miniature application under `Architecture/Fixtures/Violations` that breaks the rule on purpose, where it must report the violation. A check that stops catching its deliberate violation has silently stopped working, and that test fails too.
+The tests live in `tests/DotNetBackendTemplate.UnitTests/Architecture` and need neither Docker nor a database. Checks run against production code and deliberate violations (fixture types, model expressions or source snippets). Positive examples also protect valid arrangements, such as split slices and non-key GUID exceptions. Negative examples establish that the specific example is caught, not that every possible violation is detectable.
 
 Dependency rules read compiled IL through ArchUnitNET, so a forbidden reference hidden in an async method, a lambda, or a generic argument is still found; searching `using` directives would miss all three. Method-call rules read call instructions through Mono.Cecil and attribute calls inside async state machines and lambdas to the type the developer wrote. Endpoint rules inspect the endpoints the running host actually maps. Persistence rules read the EF design-time model. Names are derived from the assembly rather than hard-coded, so the tests survive the clone-and-rename checklist.
 
@@ -169,9 +172,15 @@ A failure lists every violation with its rule ID, the offending type or endpoint
 
 Fix the code, or record a justified exception in an ADR as described in section 8 before changing a check. Retain HTTP serialization tests as well: an endpoint returning an untyped `IResult` without `Produces` metadata hides its payload from signature-based checks.
 
+`ReviewedExceptions` in `MethodCallRulesTests` is initially empty. Each entry identifies one rule and a complete IL method signature (return type, declaring type, method name and parameter types), with rationale, ADR path and behavior-test name. Exemptions do not propagate to other overloads or helper methods. Async state-machine calls are mapped to their original method; closures retain their precise generated identity rather than inheriting broad exemptions. Reference checks establish inventory, not whether the cited test proves the exception safe.
+
+Localization checks intentionally remain small heuristics: `localizer["Key"]` literal keys and direct literal `WithMessage` arguments are recognized. Alternative names such as `messages["Key"]`, variable keys/messages and lambda messages require review. Regression tests document these blind spots instead of pretending regex provides semantic analysis.
+
 ### Runtime checks
 
 Use xUnit and Fluent Assertions for focused tests; use `WebApplicationFactory` with real SQL Server migrations and Testcontainers for persistence/API behavior. Relevant cases include validation, authorization, DTO projection, bounded pagination, audit transaction behavior, soft delete, injected time, localization, and documentation exposure.
+
+`PersistenceSafetyTests` uses a real SQL constraint failure to verify rollback from a fresh context, and a test-only retry strategy/fault after audit staging to verify exactly one audit record on re-entry for creation and soft deletion. This does not simulate every SQL Server transient failure or an ambiguous commit. A separate test-only table in the disposable container checks filtered uniqueness without altering production migrations. `JwtAuthenticationTests` uses the real bearer handler and ephemeral RSA keys with local discovery metadata; the existing test authentication scheme remains for fast campaign tests.
 
 Runtime tests demonstrate behavior, not ownership. A perfectly tested campaign workflow can still be misplaced under `Infrastructure`.
 
@@ -218,6 +227,6 @@ Document the requirement, affected rule IDs or sections, exact exception scope, 
 
 When a rule changes, update its check and its deliberate violation under `Architecture/Fixtures/Violations` in the same change. A new rule needs both. A check whose fixture no longer violates it proves nothing.
 
-- **DOC-01:** The enforcement matrix lists every rule, and its *Test* rows name exactly the rules the architecture tests check. `ArchitectureRulesDocumentTests` fails when this document and the tests drift apart, so a rule cannot be added, renamed, or dropped on only one side.
+- **DOC-01:** The enforcement matrix inventories every defined rule. Its *Test* and *Partial test* rows must match rule-ID literals and class names present in test source. `ArchitectureRulesDocumentTests` detects textual inventory drift, not whether an assertion executes or semantically proves a rule. Runtime-test coverage is reviewed separately.
 
 Architecture tests are guardrails, not a score proving that every responsibility is correctly placed. Combine structural checks, runtime tests, and responsibility review.

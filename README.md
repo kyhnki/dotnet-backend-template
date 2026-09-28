@@ -171,6 +171,8 @@ dotnet test DotNetBackendTemplate.slnx
 
 Tests use xUnit with Fluent Assertions 7.2.2. Unit tests exercise validation without infrastructure. Integration tests use `WebApplicationFactory`, a replaceable test authentication scheme, the real EF migrations, and a disposable SQL Server 2022 Testcontainer. Docker must be running for integration tests.
 
+Architecture tests in `tests/DotNetBackendTemplate.UnitTests/Architecture` fail when code breaks a rule in [architecture rules](docs/architecture-rules.md), and each failure names the rule ID. They need no Docker. Each check is also run against a deliberately broken fixture application to prove it still catches the violation it exists for.
+
 ## CI/CD
 
 This starter intentionally does not include a provider-specific CI/CD workflow. Add one after cloning that matches the product's hosting, secrets, migration, and deployment requirements. At minimum, automate restore, formatting verification, a warnings-as-errors build, and all tests.

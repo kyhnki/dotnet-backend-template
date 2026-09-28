@@ -72,7 +72,7 @@ curl -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   http://localhost:5080/api/v1/campaigns
 ```
 
-The starter intentionally pins MediatR 12.5.0, the final Apache-licensed release before the license-key model introduced in version 13. Review the current MediatR licensing terms before upgrading beyond 12.5.0.
+The starter intentionally pins MediatR 12.5.0, the final Apache-licensed release before the license-key model introduced in version 13. Review the current MediatR licensing terms before upgrading beyond 12.5.0. The architecture tests enforce this (OPS-02): they fail if MediatR, FluentAssertions, or AutoMapper is raised to a commercially licensed major version.
 
 Role values and policy names are centralized under `Infrastructure/Authorization`. Adapt them to the vocabulary and claim shape of the selected identity provider rather than scattering role strings across endpoints.
 

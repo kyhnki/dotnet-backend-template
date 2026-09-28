@@ -33,6 +33,8 @@ app.Use(async (context, next) =>
 });
 app.UseSerilogRequestLogging();
 app.UseExceptionHandler();
+// Registered before authentication so a 401 challenge, a 403 forbid, and an empty 404 all get a Problem Details body.
+app.UseStatusCodePages();
 app.UseAuthentication();
 app.UseAuthorization();
 

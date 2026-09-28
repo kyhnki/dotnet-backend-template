@@ -17,11 +17,14 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace DotNetBackendTemplate.UnitTests.Architecture;
 
-/// <summary>SEC-01, SLICE-02, SLICE-04 and SLICE-07: what every endpoint declares, accepts, and returns.</summary>
+/// <summary>
+/// SEC-01, SEC-02, SEC-06, SLICE-02, SLICE-04, SLICE-07, SLICE-08, and the contract half of TIME-02: what every
+/// endpoint declares, accepts, and returns, and that every slice is actually mapped.
+/// </summary>
 public sealed class EndpointRulesTests(ProductionEndpoints production) : IClassFixture<ProductionEndpoints>
 {
     [Fact]
-    public void ProductionEndpointsFollowEndpointRules()
+    public async Task ProductionEndpointsFollowEndpointRules()
     {
         List<RouteEndpoint> endpoints = [.. production.Endpoints.OfType<RouteEndpoint>()];
 
@@ -29,38 +32,63 @@ public sealed class EndpointRulesTests(ProductionEndpoints production) : IClassF
         endpoints.Should().NotBeEmpty();
         endpoints.Where(EndpointRules.IsBusinessEndpoint).Should().OnlyContain(
             endpoint => endpoint.Metadata.GetMetadata<MethodInfo>() != null,
-            "SLICE-02 and SLICE-04 inspect each endpoint's handler signature");
+            "SLICE-02, SLICE-04, SLICE-08, and TIME-02 inspect each endpoint's handler");
 
-        ArchitectureAssert.NoViolations(EndpointRules.Check(endpoints, ProductionCode.RootNamespace));
+        IAuthorizationPolicyProvider policies = production.Services.GetRequiredService<IAuthorizationPolicyProvider>();
+        ArchitectureAssert.NoViolations(
+            EndpointRules.Check(endpoints, ProductionCode.RootNamespace)
+                .Concat(await EndpointRules.CheckPoliciesAsync(endpoints, policies))
+                .Concat(EndpointRules.CheckRegistration(ProductionCode.Assembly.GetTypes(), endpoints, ProductionCode.RootNamespace)));
     }
 
     [Theory]
     [InlineData("SEC-01", "/api/unprotected")]
-    [InlineData("SLICE-07", "/api/unprotected")]
+    [InlineData("SEC-02", "/api/inline-role")]
+    [InlineData("SEC-06", "/api/missing-policy")]
+    [InlineData("SLICE-02", "/api/database")]
     [InlineData("SLICE-04", "/api/single-order")]
     [InlineData("SLICE-04", "/api/order-page")]
     [InlineData("SLICE-04", "/api/order-status")]
     [InlineData("SLICE-04", "/api/order-import")]
-    [InlineData("SLICE-02", "/api/database")]
-    public async Task EndpointRulesCatchDeliberateViolations(string ruleId, string route)
+    [InlineData("SLICE-07", "/api/unprotected")]
+    [InlineData("SLICE-08", "UnregisteredSlice")]
+    [InlineData("TIME-02", "/api/dated")]
+    public async Task EndpointRulesCatchDeliberateViolations(string ruleId, string subject)
     {
         await using WebApplication app = ViolatingEndpoints();
-        IEnumerable<Endpoint> endpoints = ((IEndpointRouteBuilder)app).DataSources.SelectMany(source => source.Endpoints);
+        List<Endpoint> endpoints = [.. ((IEndpointRouteBuilder)app).DataSources.SelectMany(source => source.Endpoints)];
+        IEnumerable<Type> fixtureTypes = typeof(FixtureRoot).Assembly
+            .GetTypes()
+            .Where(type => Namespaces.IsWithin(type.Namespace, FixtureRoot.Namespace));
 
-        ArchitectureAssert.Reports(EndpointRules.Check(endpoints, FixtureRoot.Namespace), ruleId, route);
+        List<ArchitectureViolation> violations =
+        [
+            .. EndpointRules.Check(endpoints, FixtureRoot.Namespace),
+            .. await EndpointRules.CheckPoliciesAsync(endpoints, app.Services.GetRequiredService<IAuthorizationPolicyProvider>()),
+            .. EndpointRules.CheckRegistration(fixtureTypes, endpoints, FixtureRoot.Namespace),
+        ];
+
+        ArchitectureAssert.Reports(violations, ruleId, subject);
     }
 
     private static WebApplication ViolatingEndpoints()
     {
-        WebApplication app = WebApplication.CreateSlimBuilder().Build();
+        WebApplicationBuilder builder = WebApplication.CreateSlimBuilder();
+        builder.Services.AddAuthorization();
+        WebApplication app = builder.Build();
 
         app.MapGet("/api/unprotected", () => "no authorization decision and no metadata");
+        app.MapGet("/api/inline-role", () => "role string instead of a policy constant")
+            .RequireAuthorization(new AuthorizeAttribute { Roles = "Administrator" });
+        app.MapGet("/api/missing-policy", () => "policy name that is never registered")
+            .RequireAuthorization("MissingPolicy");
         app.MapGet("/api/single-order", () => TypedResults.Ok(new OrderResponse(new Order()))).RequireAuthorization();
         app.MapGet("/api/order-page", () => TypedResults.Ok(new OrderPage(Array.Empty<Order>()))).RequireAuthorization();
         app.MapGet("/api/order-status", () => TypedResults.Ok(new OrderStatusResponse(OrderStatus.Open))).RequireAuthorization();
         app.MapPost("/api/order-import", (Order order) => TypedResults.Ok(order.Id)).RequireAuthorization();
         app.MapGet("/api/database", ([FromServices] ViolatingDbContext database) => TypedResults.Ok(database.ContextId.InstanceId))
             .RequireAuthorization();
+        app.MapGet("/api/dated", () => TypedResults.Ok(new DatedResponse(DateTime.UnixEpoch))).RequireAuthorization();
 
         return app;
     }
@@ -80,7 +108,9 @@ public sealed class ProductionEndpoints : IDisposable
         builder.UseSetting("Authentication:Audience", "architecture-tests");
     });
 
-    public IReadOnlyList<Endpoint> Endpoints => _factory.Services.GetRequiredService<EndpointDataSource>().Endpoints;
+    public IServiceProvider Services => _factory.Services;
+
+    public IReadOnlyList<Endpoint> Endpoints => Services.GetRequiredService<EndpointDataSource>().Endpoints;
 
     public void Dispose() => _factory.Dispose();
 }
@@ -105,6 +135,12 @@ internal static class EndpointRules
                     "declares neither RequireAuthorization nor AllowAnonymous. Minimal API endpoints are anonymous by default, so the decision must be explicit.");
             }
 
+            foreach (IAuthorizeData authorization in metadata.GetOrderedMetadata<IAuthorizeData>().Where(data => !string.IsNullOrEmpty(data.Roles)))
+            {
+                yield return new("SEC-02", subject,
+                    $"requires the inline role string '{authorization.Roles}'. Reference a policy constant from Infrastructure/Authorization instead.");
+            }
+
             if (IsBusinessEndpoint(endpoint) && MissingDocumentation(metadata) is { Count: > 0 } missing)
             {
                 yield return new("SLICE-07", subject, $"is missing {string.Join(", ", missing)}.");
@@ -120,10 +156,18 @@ internal static class EndpointRules
                     continue;
                 }
 
-                foreach (Type leaked in PersistenceTypesIn(parameter.ParameterType, persistence, root))
+                foreach (Type type in ReachableTypes(parameter.ParameterType, persistence, root))
                 {
-                    yield return new("SLICE-04", subject,
-                        $"binds {leaked.FullName} from the request through '{parameter.Name}'. Bind an API-owned request type instead; binding persistence types allows mass assignment.");
+                    if (Namespaces.IsWithin(type.Namespace, persistence))
+                    {
+                        yield return new("SLICE-04", subject,
+                            $"binds {type.FullName} from the request through '{parameter.Name}'. Bind an API-owned request type instead; binding persistence types allows mass assignment.");
+                    }
+                    else if (type == typeof(DateTime))
+                    {
+                        yield return new("TIME-02", subject,
+                            $"accepts a DateTime through '{parameter.Name}'. Contracts use UTC DateTimeOffset (ADR-0003).");
+                    }
                 }
             }
 
@@ -137,10 +181,58 @@ internal static class EndpointRules
                 results = results.Append(handler.ReturnType);
             }
 
-            foreach (Type leaked in results.SelectMany(result => PersistenceTypesIn(result, persistence, root)).Distinct())
+            foreach (Type type in results.SelectMany(result => ReachableTypes(result, persistence, root)).Distinct())
             {
-                yield return new("SLICE-04", subject,
-                    $"returns {leaked.FullName}. Responses must use API-owned types; map persistence types in the handler.");
+                if (Namespaces.IsWithin(type.Namespace, persistence))
+                {
+                    yield return new("SLICE-04", subject,
+                        $"returns {type.FullName}. Responses must use API-owned types; map persistence types in the handler.");
+                }
+                else if (type == typeof(DateTime))
+                {
+                    yield return new("TIME-02", subject, "returns a DateTime. Contracts use UTC DateTimeOffset (ADR-0003).");
+                }
+            }
+        }
+    }
+
+    /// <summary>SEC-06: a misspelled policy name compiles, then throws on the first request that needs it.</summary>
+    public static async Task<IReadOnlyList<ArchitectureViolation>> CheckPoliciesAsync(
+        IEnumerable<Endpoint> endpoints,
+        IAuthorizationPolicyProvider policies)
+    {
+        List<ArchitectureViolation> violations = [];
+
+        foreach (RouteEndpoint endpoint in endpoints.OfType<RouteEndpoint>())
+        {
+            foreach (string policy in endpoint.Metadata.GetOrderedMetadata<IAuthorizeData>().Select(data => data.Policy).OfType<string>())
+            {
+                if (await policies.GetPolicyAsync(policy) is null)
+                {
+                    violations.Add(new("SEC-06", Describe(endpoint),
+                        $"requires policy '{policy}', which is not registered, so the first request would throw. Register it in AddAuthorizationBuilder and reference its constant."));
+                }
+            }
+        }
+
+        return violations;
+    }
+
+    /// <summary>SLICE-08: a slice whose MapEndpoint is never called has no endpoint, and nothing else notices.</summary>
+    public static IEnumerable<ArchitectureViolation> CheckRegistration(IEnumerable<Type> types, IEnumerable<Endpoint> endpoints, string root)
+    {
+        HashSet<Type> mapped = [.. endpoints
+            .Select(endpoint => endpoint.Metadata.GetMetadata<MethodInfo>()?.DeclaringType)
+            .OfType<Type>()
+            .Select(WrittenType)];
+
+        foreach (Type slice in types.Where(type => Namespaces.IsWithin(type.Namespace, $"{root}.Features")))
+        {
+            bool mapsEndpoint = slice.GetMethod("MapEndpoint", BindingFlags.Public | BindingFlags.Static) is not null;
+            if (mapsEndpoint && !mapped.Contains(slice))
+            {
+                yield return new("SLICE-08", slice.FullName!,
+                    "defines MapEndpoint, but no mapped endpoint uses its handler. Call it from EndpointRouteBuilderExtensions.");
             }
         }
     }
@@ -177,11 +269,11 @@ internal static class EndpointRules
     }
 
     /// <summary>
-    /// Walks a contract type through generics, arrays, and the properties of the application's own types, and returns
-    /// every type declared under Persistence. Framework types are not descended into except through their generic
-    /// arguments, so <c>Task&lt;Ok&lt;Response&gt;&gt;</c> reaches <c>Response</c>.
+    /// Every type a contract reaches through generics, arrays, and the properties of the application's own types.
+    /// Framework types are not descended into except through their generic arguments, so <c>Task&lt;Ok&lt;T&gt;&gt;</c>
+    /// reaches <c>T</c>, and persistence types are reported rather than descended into.
     /// </summary>
-    private static IEnumerable<Type> PersistenceTypesIn(Type contract, string persistence, string root)
+    private static IEnumerable<Type> ReachableTypes(Type contract, string persistence, string root)
     {
         HashSet<Type> visited = [];
         Stack<Type> pending = new([contract]);
@@ -193,9 +285,10 @@ internal static class EndpointRules
                 continue;
             }
 
+            yield return type;
+
             if (Namespaces.IsWithin(type.Namespace, persistence))
             {
-                yield return type;
                 continue;
             }
 
@@ -217,6 +310,18 @@ internal static class EndpointRules
                 }
             }
         }
+    }
+
+    /// <summary>Maps a compiler-generated closure back to the type the developer wrote.</summary>
+    private static Type WrittenType(Type type)
+    {
+        Type current = type;
+        while (current.Name.StartsWith('<') && current.DeclaringType is { } declaring)
+        {
+            current = declaring;
+        }
+
+        return current;
     }
 
     private static bool IsDatabaseAccess(Type type) =>

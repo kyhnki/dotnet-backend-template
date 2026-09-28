@@ -33,4 +33,13 @@
   <data name="CampaignEndsAtUtcMustBeAfterStartsAtUtc" xml:space="preserve">
     <value>EndsAtUtc must be after StartsAtUtc.</value>
   </data>
+  <data name="UnauthorizedTitle" xml:space="preserve">
+    <value>Authentication is required.</value>
+  </data>
+  <data name="ForbiddenTitle" xml:space="preserve">
+    <value>You do not have permission to perform this action.</value>
+  </data>
+  <data name="NotFoundTitle" xml:space="preserve">
+    <value>The requested resource was not found.</value>
+  </data>
 </root>

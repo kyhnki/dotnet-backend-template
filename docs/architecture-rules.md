@@ -8,7 +8,7 @@ These are conventions inside one assembly, not compiler-enforced project boundar
 
 Rules apply to production code under `src/DotNetBackendTemplate.Api`. Test fixtures may reference production areas and replace infrastructure. Generated migrations remain subject to schema review but are excluded from hand-written-code placement checks.
 
-**Enforcement status:** rules marked *Test* in the [enforcement matrix](#enforcement-matrix) fail `dotnet test` when violated, and every failure names the rule it broke. Rules marked *Planned* are candidates for method-level checks, and rules marked *Review* cannot be proven structurally. Passing the tests therefore does not prove full architectural compliance; see [what automation cannot prove](#responsibility-review-what-automation-cannot-prove).
+**Enforcement status:** rules marked *Test* in the [enforcement matrix](#enforcement-matrix) fail `dotnet test` when violated, and every failure names the rule it broke. Rules marked *Analyzer* fail the build, rules marked *Runtime tests* are covered by behavior tests, and rules marked *Review* cannot be proven structurally. Passing the tests therefore does not prove full architectural compliance; see [what automation cannot prove](#responsibility-review-what-automation-cannot-prove).
 
 ## 1. Decide ownership by responsibility
 
@@ -52,6 +52,7 @@ Dependencies include constructor parameters, inheritance, implemented interfaces
 | DEP-05 | A feature must not directly call or instantiate another feature's handler, or reuse another feature's HTTP DTO as its own contract. Cross-feature coordination needs explicit design review; sending another request is not an automatic exemption. | Dependency analysis plus workflow review |
 | DEP-06 | Production types must never depend on test assemblies. | Project/reference analysis |
 | DEP-07 | Hand-written source folders and namespaces must agree. Renaming a namespace must not hide a class physically stored in the wrong area. | Source analysis |
+| DEP-08 | Request handlers must not depend on `ISender`, `IMediator`, or `IPublisher`. Dispatching another request from a handler nests pipelines and hides the cross-feature coordination DEP-05 reserves for design review. | Dependency analysis |
 
 ### Explicit current exceptions and allowances
 
@@ -70,8 +71,9 @@ Keep exceptions specific to a responsibility or type. Do not exclude an entire n
 - **SLICE-03:** Commands change tracked entities and persist through `SaveChangesAsync`. Queries do not mutate state or call save methods; they use `AsNoTracking()` and project required columns directly into query-owned response models. Name the MediatR request `Command` when it changes state and `Query` when it only reads; automated CQRS checks identify queries by that name.
 - **SLICE-04:** No type declared under `Persistence` — entity, enum, or anything else — crosses the HTTP boundary in either direction, including types nested in DTOs, collections, or generic results. Returning a DTO that wraps an entity does not satisfy this rule, and binding an entity from a request allows mass assignment. Expose API-owned contract types and map to them in the handler. `Features/Campaigns/CampaignStatus.cs` shows the pattern for an enum; it keeps the persistence enum's name so the JSON contract is unchanged.
 - **SLICE-05:** Pass cancellation tokens to asynchronous persistence and dispatch operations. List operations must be bounded; the campaign example clamps page size to `1..100`.
-- **SLICE-06:** Keep validation in the FluentValidation pipeline and request timing/logging in generic behaviors. Business invariants involving persisted state still need handler-level decisions and appropriate database constraints; input validators are not a substitute for concurrency-safe enforcement.
+- **SLICE-06:** Keep validation in the FluentValidation pipeline and request timing/logging in generic behaviors. Business invariants involving persisted state still need handler-level decisions and appropriate database constraints; input validators are not a substitute for concurrency-safe enforcement. Updates are last-write-wins by decision until an entity adopts optimistic concurrency ([ADR-0007](adr/0007-accept-last-write-wins-updates.md)).
 - **SLICE-07:** Every business endpoint under `/api` declares a stable name (`WithName`), a tag, a summary, a description, and response metadata, so the OpenAPI document describes it. Each contract type gets its own schema, and the documented schema must match the type the endpoint binds or returns.
+- **SLICE-08:** Every slice that defines `MapEndpoint` is registered in `EndpointRouteBuilderExtensions`. An unregistered slice has no endpoint, and nothing else notices.
 
 Do not add generic repositories, a custom unit of work, domain events, separate read/write databases, or a generic result abstraction by default. Revisit these choices only for a concrete requirement, recorded in an ADR.
 
@@ -79,31 +81,42 @@ Do not add generic repositories, a custom unit of work, domain events, separate 
 
 - **PERS-01:** Keep schema configuration and migrations under `Persistence`. Apply migrations explicitly; never migrate automatically at application startup.
 - **PERS-02:** Auditing is opt-in through `IAuditableEntity`. Use the interceptor, not ad hoc handler audit writes. Business changes and audit rows must commit together.
-- **PERS-03:** Exclude secrets, tokens, oversized values, and unnecessary personal data with `[AuditIgnore]`.
+- **PERS-03:** Exclude secrets, tokens, oversized values, and unnecessary personal data with `[AuditIgnore]`. A property on an auditable entity whose name looks sensitive (password, secret, token, API key, private key, connection string) must carry it; the name check is a heuristic that prompts the decision, and only a person can judge what else is sensitive.
 - **PERS-04:** Do not make `AuditLog` auditable or soft-deletable.
 - **PERS-05:** Auditable keys must be available before saving. Follow [ADR-0006](adr/0006-use-sequential-guid-keys.md): leave new entity IDs unset and let EF generate the SQL Server sequential GUID when adding the entity. Do not introduce explicit random GUIDs or database-generated keys without revisiting the audit/key strategy. An ID is never a replacement for authorization.
 - **PERS-06:** Soft delete is opt-in through `ISoftDeletable`, and every soft-deletable entity has the global query filter. Its interceptor implements the storage mechanism; feature code decides whether deletion is permitted.
-- **PERS-07:** Review every `IgnoreQueryFilters()` use for intent and authorization. It is an exceptional read path, not a convenient fix for a missing record.
+- **PERS-07:** Review every `IgnoreQueryFilters()` use for intent and authorization. It is an exceptional read path, not a convenient fix for a missing record. A reviewed use is added, with its reason, to the allowlist in `MethodCallRulesTests`.
 - **PERS-08:** Follow the active-row unique-index convention for soft-deletable entities: every unique index is filtered to rows that are not deleted.
 - **PERS-09:** Preserve the audit action `Deleted` even though the database operation becomes an update, including on retries.
 - **PERS-10:** Bulk operations such as `ExecuteUpdate`, `ExecuteDelete`, and raw SQL can bypass change tracking and `SaveChanges` interceptors. Do not use them for audited or soft-deletable data without an explicitly reviewed equivalent strategy and tests.
 - **PERS-11:** Every entity type the DbContext maps is declared under `Persistence`.
+- **PERS-12:** The model always matches the latest migration. Add the migration in the same change as the entity or configuration change; since migrations are never applied automatically, a missing one would first surface in production.
+- **PERS-13:** Store enums as strings with `HasConversion<string>()`, so renaming or reordering members cannot silently change the meaning of stored rows.
+- **PERS-14:** Give every string column a maximum length, or an explicit `HasColumnType("nvarchar(max)")` when unbounded is intended. An implicit `nvarchar(max)` cannot be indexed.
+- **PERS-15:** Do not cascade-delete from a soft-deletable principal to a dependent that is not soft-deletable: soft-deleting the parent would hard-delete the child.
+- **PERS-16:** A dependent with a required relationship to a soft-deletable, filtered principal needs a query filter too. EF Core reports the mismatch only as a runtime log warning, which `TreatWarningsAsErrors` does not see.
+- **PERS-17:** Auditable entities do not use complex or owned types until the audit interceptor reads them; their values would otherwise be missing from the audit trail.
+- **PERS-18:** Open explicit transactions only inside `Database.CreateExecutionStrategy()`. `EnableRetryOnFailure` rejects a user-initiated transaction outside it at runtime.
+- **PERS-19:** A command handler calls `SaveChanges` once. Each call is its own transaction, so a failure between two calls leaves business and audit rows half-written; use an execution-strategy transaction when more are needed.
 
 See [ADR-0002](adr/0002-persist-audit-logs-with-ef-core-interceptor.md) and [ADR-0005](adr/0005-soft-delete-opt-in-entities.md).
 
 ## 5. Time, localization, security, and operations
 
 - **TIME-01:** Inject `TimeProvider` and call `GetUtcNow()` for the current instant. Do not bypass injection by calling `TimeProvider.System` in a handler; its production registration belongs in composition code. Direct clock APIs listed in `BannedSymbols.txt` are build errors.
-- **TIME-02:** Use UTC `DateTimeOffset` values in contracts and persistence. Reject nonzero offsets rather than silently normalizing them; clients should send the documented `+00:00` form. A validator checking `Offset == TimeSpan.Zero` verifies the parsed offset, not the exact original JSON spelling. Exact wire-format restrictions require separate parsing/contract tests.
+- **TIME-02:** Use UTC `DateTimeOffset` values in contracts and persistence. Reject nonzero offsets rather than silently normalizing them; clients should send the documented `+00:00` form. A validator checking `Offset == TimeSpan.Zero` verifies the parsed offset, not the exact original JSON spelling. Exact wire-format restrictions require separate parsing/contract tests. Entities and HTTP contracts never use `DateTime`.
 - **TIME-03:** Keep user-local time formatting in clients unless a documented scheduling requirement changes this boundary.
 - **LOC-01:** Put client-facing validation text and Problem Details titles in resources, with an entry in every supported language (currently English and Turkish). Select culture only through `Accept-Language`; support the current specific and neutral tags with English fallback. Keep JSON keys, error keys, status/type/trace identifiers, logs, and persisted data culture-neutral.
 - **LOC-02:** Every resource key used in code must exist. `IStringLocalizer` does not fail on an unknown key; it returns the key name, so a typo reaches the client as text.
+- **LOC-03:** Validators take their messages from the localizer. A string literal passed to `WithMessage` bypasses the resources and reaches every client in English.
 - **SEC-01:** Every endpoint makes an explicit authorization decision with `RequireAuthorization` or `AllowAnonymous`. Minimal API endpoints are anonymous by default, so a forgotten decision means a public endpoint.
-- **SEC-02:** Use centralized policy constants rather than inline role strings.
+- **SEC-02:** Use centralized policy constants rather than inline role strings: endpoints never pass role names directly, and only Infrastructure builds role requirements.
 - **SEC-03:** Adding resource ownership or tenant checks requires feature-level design and tests; a role check alone does not establish ownership.
 - **SEC-04:** Keep JWT validation in infrastructure; the starter does not issue tokens or manage identities. Keep secrets outside source control.
-- **SEC-05:** Return validation/unexpected errors through the shared Problem Details handling. Do not expose exception details in unexpected-error responses or log request payloads, credentials, or bearer tokens.
+- **SEC-05:** Return validation/unexpected errors through the shared Problem Details handling. Status-code-only responses (401, 403, 404) are Problem Details with a localized title as well, through `UseStatusCodePages`. Do not expose exception details in unexpected-error responses or log request payloads, credentials, or bearer tokens.
+- **SEC-06:** Every policy an endpoint references is registered. A misspelled policy name compiles, then throws on the first request that needs it.
 - **OPS-01:** Keep health probes anonymous and non-sensitive. OpenAPI is exposed in Development/Testing; Swagger UI only in Development; neither is exposed in Production. Do not introduce a duplicate document generator.
+- **OPS-02:** Keep MediatR below 13, FluentAssertions below 8, and AutoMapper below 15; their next major versions require a commercial license. Review the license and record an ADR before raising a limit.
 
 See [ADR-0003](adr/0003-use-time-provider-and-utc-timestamps.md) and [ADR-0004](adr/0004-localize-api-errors.md).
 
@@ -113,31 +126,32 @@ See [ADR-0003](adr/0003-use-time-provider-and-utc-timestamps.md) and [ADR-0004](
 
 | Rule | Enforcement | Where |
 | --- | --- | --- |
-| DEP-01, DEP-02, DEP-03, DEP-05, DEP-06 | Test | `DependencyRulesTests` |
+| DEP-01, DEP-02, DEP-03, DEP-05, DEP-06, DEP-08 | Test | `DependencyRulesTests` |
 | DEP-04 | Review — it is an allowance | — |
 | DEP-07 | Test | `NamespaceRulesTests` |
 | SLICE-01 | Test | `SliceRulesTests` |
 | SLICE-02 | Test for database access in endpoint signatures; review for other logic | `EndpointRulesTests` |
-| SLICE-03 | Planned: queries must not save and must use `AsNoTracking()` | — |
-| SLICE-04 | Test | `EndpointRulesTests` |
-| SLICE-07 | Test for metadata; runtime test that each operation's schema matches its contract type | `EndpointRulesTests`, `OpenApiContractTests` |
-| SLICE-05 | Review; the campaign page-size clamp has runtime tests | `CampaignEndpointsTests` |
+| SLICE-03 | Test | `MethodCallRulesTests` |
+| SLICE-04, SLICE-08 | Test | `EndpointRulesTests` |
+| SLICE-05 | Analyzer (CA2016) for forwarding cancellation tokens; review for bounded lists, with runtime tests for the campaign page-size clamp | `CampaignEndpointsTests` |
 | SLICE-06 | Review | — |
-| PERS-01 | Planned: no `Migrate` call in production code | — |
+| SLICE-07 | Test for metadata; runtime test that each operation's schema matches its contract type | `EndpointRulesTests`, `OpenApiContractTests` |
+| PERS-01, PERS-07, PERS-10, PERS-18, PERS-19 | Test | `MethodCallRulesTests` |
 | PERS-02, PERS-09 | Runtime tests | `CampaignEndpointsTests` |
-| PERS-03 | Review — only a person can judge what is sensitive | — |
-| PERS-04, PERS-06, PERS-08, PERS-11 | Test | `PersistenceModelRulesTests` |
-| PERS-05 | Test against the EF model; planned: no `Guid.NewGuid()` in Features or Persistence | `PersistenceModelRulesTests` |
-| PERS-07 | Planned: an `IgnoreQueryFilters()` allowlist; intent remains a review | — |
-| PERS-10 | Planned: no bulk operations or `ExecuteSql*` | — |
-| TIME-01 | Analyzer (`BannedSymbols.txt`); planned: `TimeProvider.System` only in composition | — |
-| TIME-02 | Runtime tests | `CreateCampaignValidatorTests`, `CampaignEndpointsTests` |
+| PERS-03 | Test for sensitive-looking names (heuristic); what else is sensitive remains a review | `PersistenceModelRulesTests` |
+| PERS-04, PERS-06, PERS-08, PERS-11, PERS-12, PERS-13, PERS-14, PERS-15, PERS-16, PERS-17 | Test | `PersistenceModelRulesTests` |
+| PERS-05 | Test against the EF model and for `Guid.NewGuid()` calls | `PersistenceModelRulesTests`, `MethodCallRulesTests` |
+| TIME-01 | Test for `TimeProvider.System` outside composition; analyzer (`BannedSymbols.txt`) for the clock APIs | `MethodCallRulesTests` |
+| TIME-02 | Test for `DateTime` in entities and contracts; runtime tests for offsets | `PersistenceModelRulesTests`, `EndpointRulesTests`, `CreateCampaignValidatorTests`, `CampaignEndpointsTests` |
 | TIME-03, SEC-03, SEC-04 | Review | — |
 | LOC-01 | Test for completeness; runtime tests for culture selection | `LocalizationRulesTests`, `CampaignEndpointsTests` |
-| LOC-02, SEC-01 | Test | `LocalizationRulesTests`, `EndpointRulesTests` |
-| SEC-02 | Planned: `RequireRole` only in Infrastructure | — |
-| SEC-05 | Runtime tests for the Problem Details shape; log content is a review | `CampaignEndpointsTests` |
+| LOC-02, LOC-03 | Test | `LocalizationRulesTests` |
+| SEC-01, SEC-06 | Test | `EndpointRulesTests` |
+| SEC-02 | Test for inline roles and for `RequireRole` outside Infrastructure | `EndpointRulesTests`, `MethodCallRulesTests` |
+| SEC-05 | Runtime tests for Problem Details on 400, 401, 403, and 404; log content is a review | `CampaignEndpointsTests`, `OpenApiContractTests` |
 | OPS-01 | Runtime tests | `SwaggerUiTests`, `CampaignEndpointsTests` |
+| OPS-02 | Test | `PackageRulesTests` |
+| DOC-01 | Test | `ArchitectureRulesDocumentTests` |
 
 Section 1 responsibility placement is a review throughout.
 
@@ -145,7 +159,7 @@ Section 1 responsibility placement is a review throughout.
 
 The tests live in `tests/DotNetBackendTemplate.UnitTests/Architecture` and need neither Docker nor a database. Each rule is a check that runs twice: against the production code, where it must report nothing, and against a miniature application under `Architecture/Fixtures/Violations` that breaks the rule on purpose, where it must report the violation. A check that stops catching its deliberate violation has silently stopped working, and that test fails too.
 
-Dependency rules read compiled IL through ArchUnitNET, so a forbidden reference hidden in an async method, a lambda, or a generic argument is still found; searching `using` directives would miss all three. Endpoint rules inspect the endpoints the running host actually maps. Persistence rules read the EF design-time model. Names are derived from the assembly rather than hard-coded, so the tests survive the clone-and-rename checklist.
+Dependency rules read compiled IL through ArchUnitNET, so a forbidden reference hidden in an async method, a lambda, or a generic argument is still found; searching `using` directives would miss all three. Method-call rules read call instructions through Mono.Cecil and attribute calls inside async state machines and lambdas to the type the developer wrote. Endpoint rules inspect the endpoints the running host actually maps. Persistence rules read the EF design-time model. Names are derived from the assembly rather than hard-coded, so the tests survive the clone-and-rename checklist.
 
 A failure lists every violation with its rule ID, the offending type or endpoint, and what to do:
 
@@ -154,10 +168,6 @@ A failure lists every violation with its rule ID, the offending type or endpoint
 ```
 
 Fix the code, or record a justified exception in an ADR as described in section 8 before changing a check. Retain HTTP serialization tests as well: an endpoint returning an untyped `IResult` without `Produces` metadata hides its payload from signature-based checks.
-
-### Planned method-level checks
-
-These need method-call analysis and are the next step: SLICE-03, PERS-01, the code side of PERS-05, PERS-07, PERS-10, TIME-01, and SEC-02 in the matrix above.
 
 ### Runtime checks
 
@@ -207,5 +217,7 @@ CI/CD remains project-specific. These commands can run locally; this document do
 Document the requirement, affected rule IDs or sections, exact exception scope, alternatives, owner, and tests in an ADR. State when a temporary exception should be reviewed or removed. Update this document and conflicting guidance in the same change.
 
 When a rule changes, update its check and its deliberate violation under `Architecture/Fixtures/Violations` in the same change. A new rule needs both. A check whose fixture no longer violates it proves nothing.
+
+- **DOC-01:** The enforcement matrix lists every rule, and its *Test* rows name exactly the rules the architecture tests check. `ArchitectureRulesDocumentTests` fails when this document and the tests drift apart, so a rule cannot be added, renamed, or dropped on only one side.
 
 Architecture tests are guardrails, not a score proving that every responsibility is correctly placed. Combine structural checks, runtime tests, and responsibility review.

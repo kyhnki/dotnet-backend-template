@@ -28,6 +28,20 @@ internal sealed class ViolatingDbContext(DbContextOptions<ViolatingDbContext> op
         });
 
         modelBuilder.Entity<EntityOutsidePersistence>();
+
+        modelBuilder.Entity<EntityWithUnconvertedEnum>();
+        modelBuilder.Entity<EntityWithUnboundedString>();
+        modelBuilder.Entity<EntityWithDateTime>();
+
+        modelBuilder.Entity<SoftDeletableParent>(builder =>
+        {
+            builder.HasQueryFilter(entity => !entity.IsDeleted);
+            builder.HasMany(parent => parent.Children).WithOne(child => child.Parent).IsRequired();
+        });
+
+        modelBuilder.Entity<AuditableWithComplexType>().ComplexProperty(entity => entity.Address);
+        modelBuilder.Entity<AuditableWithOwnedType>().OwnsOne(entity => entity.Budget);
+        modelBuilder.Entity<AuditableWithSecret>();
     }
 }
 

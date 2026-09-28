@@ -18,13 +18,14 @@ flowchart TD
         C["Content-Language<br/>registers an OnStarting header write"]
         S["UseSerilogRequestLogging<br/>opens the request log scope"]
         X["UseExceptionHandler<br/>guards everything below it"]
+        SP["UseStatusCodePages<br/>gives empty error responses a Problem Details body"]
         AN["UseAuthentication<br/>validates the JWT bearer token"]
         AZ["UseAuthorization<br/>evaluates the CampaignWrite policy"]
-        R --> L --> C --> S --> X --> AN --> AZ
+        R --> L --> C --> S --> X --> SP --> AN --> AZ
     end
 
-    AN -. "no or invalid token" .-> E401(["401 Unauthorized"])
-    AZ -. "not Administrator or CampaignManager" .-> E403(["403 Forbidden"])
+    AN -. "no or invalid token" .-> E401(["401 Problem Details<br/>localized title"])
+    AZ -. "not Administrator or CampaignManager" .-> E403(["403 Problem Details<br/>localized title"])
 
     AZ --> EP["CreateCampaign.HandleAsync<br/>binds the JSON body to Request, builds Command"]
 
@@ -92,6 +93,7 @@ sequenceDiagram
 | Content-Language | inline middleware in [Program.cs](../src/DotNetBackendTemplate.Api/Program.cs) |
 | Serilog request logging | [Program.cs](../src/DotNetBackendTemplate.Api/Program.cs) |
 | Exception handling | [GlobalExceptionHandler.cs](../src/DotNetBackendTemplate.Api/Common/Exceptions/GlobalExceptionHandler.cs) |
+| Status code pages | [Program.cs](../src/DotNetBackendTemplate.Api/Program.cs), titles localized in [ServiceCollectionExtensions.cs](../src/DotNetBackendTemplate.Api/Common/Extensions/ServiceCollectionExtensions.cs) |
 | Authentication | [AuthenticationExtensions.cs](../src/DotNetBackendTemplate.Api/Infrastructure/Authentication/AuthenticationExtensions.cs) |
 | Authorization policy | [AuthorizationPolicies.cs](../src/DotNetBackendTemplate.Api/Infrastructure/Authorization/AuthorizationPolicies.cs) |
 | Route group and endpoint mapping | [EndpointRouteBuilderExtensions.cs](../src/DotNetBackendTemplate.Api/Common/Extensions/EndpointRouteBuilderExtensions.cs) |
@@ -113,6 +115,8 @@ sequenceDiagram
   surface through `GlobalExceptionHandler` instead.
 - **`UseExceptionHandler` is registered after `UseSerilogRequestLogging`.** The request is still
   logged with its final status when the exception handler produces the response.
+- **`UseStatusCodePages` sits before authentication.** A 401 challenge, a 403 forbid, and an empty 404 therefore
+  get a Problem Details body with a localized title on the way out, and the `WWW-Authenticate` header is kept.
 - **`Content-Language` is written from `OnStarting`, not eagerly.** `UseExceptionHandler` clears
   response headers when it re-executes the pipeline, so a header written earlier would be lost on
   every error response.

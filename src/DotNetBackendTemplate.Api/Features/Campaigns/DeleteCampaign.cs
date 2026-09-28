@@ -44,7 +44,7 @@ public static class DeleteCampaign
             .Produces(StatusCodes.Status204NoContent)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)
-            .Produces(StatusCodes.Status404NotFound);
+            .ProducesProblem(StatusCodes.Status404NotFound);
     }
 
     private static async Task<Results<NoContent, NotFound>> HandleAsync(

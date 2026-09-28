@@ -1,5 +1,6 @@
 using System.Reflection;
 using DotNetBackendTemplate.UnitTests.Architecture.Fixtures.Violations;
+using MediatR;
 using Microsoft.EntityFrameworkCore;
 using ArchitectureModel = ArchUnitNET.Domain.Architecture;
 using ArchLoader = ArchUnitNET.Loader.ArchLoader;
@@ -9,7 +10,7 @@ using ITypeDependency = ArchUnitNET.Domain.Dependencies.ITypeDependency;
 
 namespace DotNetBackendTemplate.UnitTests.Architecture;
 
-/// <summary>DEP-01, DEP-02, DEP-03, DEP-05 and DEP-06 in docs/architecture-rules.md, section 2.</summary>
+/// <summary>DEP-01, DEP-02, DEP-03, DEP-05, DEP-06 and DEP-08 in docs/architecture-rules.md, section 2.</summary>
 public sealed class DependencyRulesTests
 {
     private static readonly Lazy<ArchitectureModel> FixtureArchitecture =
@@ -31,6 +32,18 @@ public sealed class DependencyRulesTests
     [Fact]
     public void ProductionAssemblyDoesNotReferenceTestAssemblies() =>
         ArchitectureAssert.NoViolations(DependencyRules.CheckReferences(ProductionCode.Assembly));
+
+    [Fact]
+    public void ProductionHandlersDoNotDispatchOtherRequests() =>
+        ArchitectureAssert.NoViolations(DependencyRules.CheckHandlerDependencies(ProductionCode.Assembly.GetTypes()));
+
+    [Fact]
+    public void HandlerRuleCatchesHandlerThatDispatchesRequests() =>
+        ArchitectureAssert.Reports(
+            DependencyRules.CheckHandlerDependencies(typeof(FixtureRoot).Assembly.GetTypes()
+                .Where(type => Namespaces.IsWithin(type.Namespace, FixtureRoot.Namespace))),
+            "DEP-08",
+            "NotifyOrder");
 
     [Theory]
     [InlineData("DEP-01", "InfrastructureSignatureLeak")]
@@ -124,6 +137,29 @@ internal static class DependencyRules
         }
     }
 
+    /// <summary>
+    /// DEP-08: a handler that dispatches other requests nests pipelines and hides cross-feature coordination, which
+    /// DEP-05 says is not an automatic exemption.
+    /// </summary>
+    public static IEnumerable<ArchitectureViolation> CheckHandlerDependencies(IEnumerable<Type> types)
+    {
+        const BindingFlags Instance = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+
+        foreach (Type handler in types.Where(IsRequestHandler))
+        {
+            IEnumerable<Type> injected = handler.GetConstructors(Instance)
+                .SelectMany(constructor => constructor.GetParameters())
+                .Select(parameter => parameter.ParameterType)
+                .Concat(handler.GetFields(Instance).Select(field => field.FieldType));
+
+            foreach (Type dependency in injected.Distinct().Where(IsMediator))
+            {
+                yield return new("DEP-08", handler.FullName!,
+                    $"depends on {dependency.Name}. Handlers must not dispatch other requests or publish notifications; cross-feature coordination needs explicit design review, recorded in an ADR.");
+            }
+        }
+    }
+
     public static IEnumerable<ArchitectureViolation> CheckReferences(Assembly assembly) =>
         CheckReferences(assembly.GetName().Name!, assembly.GetReferencedAssemblies());
 
@@ -166,6 +202,14 @@ internal static class DependencyRules
     private static bool IsDbContext(IType type) =>
         Type.GetType(type.AssemblyQualifiedName, throwOnError: false) is { } clrType
         && typeof(DbContext).IsAssignableFrom(clrType);
+
+    private static bool IsRequestHandler(Type type) =>
+        type.GetInterfaces().Any(contract => contract.IsGenericType
+            && (contract.GetGenericTypeDefinition() == typeof(IRequestHandler<,>)
+                || contract.GetGenericTypeDefinition() == typeof(IRequestHandler<>)));
+
+    private static bool IsMediator(Type type) =>
+        typeof(ISender).IsAssignableFrom(type) || typeof(IPublisher).IsAssignableFrom(type);
 
     private static bool IsTestAssembly(string? name) =>
         name is not null

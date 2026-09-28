@@ -24,7 +24,9 @@ internal static class ProductionCode
 
     public static ArchitectureModel Architecture => LazyArchitecture.Value;
 
-    public static string SourceDirectory { get; } = Path.Combine(FindRepositoryRoot(), "src", RootNamespace);
+    public static string RepositoryRoot { get; } = FindRepositoryRoot();
+
+    public static string SourceDirectory { get; } = Path.Combine(RepositoryRoot, "src", RootNamespace);
 
     /// <summary>
     /// The design-time model keeps relational annotations such as index filters, which the runtime model may drop.

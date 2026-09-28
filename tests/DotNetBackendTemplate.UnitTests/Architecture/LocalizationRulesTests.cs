@@ -5,8 +5,8 @@ using DotNetBackendTemplate.Api.Infrastructure.Localization;
 namespace DotNetBackendTemplate.UnitTests.Architecture;
 
 /// <summary>
-/// LOC-01 and LOC-02: every client-facing message exists in every supported language, and every resource key the
-/// code uses exists. Keys are read from the resource files, so a new message is checked without editing this test.
+/// LOC-01, LOC-02 and LOC-03: every client-facing message exists in every supported language, every resource key the
+/// code uses exists, and validator messages come from the resources. Keys are read from the resource files, so a new message is checked without editing this test.
 /// </summary>
 public sealed class LocalizationRulesTests
 {
@@ -30,6 +30,19 @@ public sealed class LocalizationRulesTests
         ArchitectureAssert.NoViolations(
             LocalizationRules.CheckUsedKeys(ProductionCode.SourceFiles(_ => true), neutral.Keys.ToHashSet(StringComparer.Ordinal)));
     }
+
+    [Fact]
+    public void ProductionValidatorMessagesComeFromResources() =>
+        ArchitectureAssert.NoViolations(LocalizationRules.CheckValidatorMessages(ProductionCode.SourceFiles(_ => true)));
+
+    [Theory]
+    [InlineData("""RuleFor(x => x.Name).NotEmpty().WithMessage("Name is required");""")]
+    [InlineData("""RuleFor(x => x.Name).NotEmpty().WithMessage($"{nameof(Name)} is required");""")]
+    public void ValidatorMessageRuleCatchesStringLiterals(string source) =>
+        ArchitectureAssert.Reports(
+            LocalizationRules.CheckValidatorMessages([("Features/Orders/PlaceOrder.cs", source)]),
+            "LOC-03",
+            "Features/Orders/PlaceOrder.cs");
 
     [Theory]
     [InlineData("tr:Missing")]
@@ -157,6 +170,22 @@ internal static partial class LocalizationRules
             }
         }
     }
+
+    /// <summary>LOC-03: a string literal passed to WithMessage bypasses localization and reaches every client in English.</summary>
+    public static IEnumerable<ArchitectureViolation> CheckValidatorMessages(IEnumerable<(string RelativePath, string Source)> files)
+    {
+        foreach ((string path, string source) in files)
+        {
+            foreach (Match literal in LiteralValidatorMessage().Matches(source))
+            {
+                yield return new("LOC-03", path,
+                    $"passes a string literal to WithMessage ({literal.Value.Trim()}…). Use localizer[\"Key\"] so the message follows Accept-Language.");
+            }
+        }
+    }
+
+    [GeneratedRegex(@"\.WithMessage\(\s*[@$]*""")]
+    private static partial Regex LiteralValidatorMessage();
 
     [GeneratedRegex("""[Ll]ocalizer\s*\[\s*"(?<key>[^"]+)"\s*[,\]]""")]
     private static partial Regex LocalizerKey();

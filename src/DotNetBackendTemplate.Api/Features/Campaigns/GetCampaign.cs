@@ -39,7 +39,7 @@ public static class GetCampaign
             .WithSummary("Get a campaign by ID")
             .WithDescription("Returns the projected campaign details without exposing the EF Core entity.")
             .Produces<Response>()
-            .Produces(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status401Unauthorized);
     }
 

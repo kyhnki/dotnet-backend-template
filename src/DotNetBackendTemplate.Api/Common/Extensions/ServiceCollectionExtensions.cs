@@ -2,6 +2,7 @@ using System.Globalization;
 using DotNetBackendTemplate.Api.Common.Behaviors;
 using DotNetBackendTemplate.Api.Common.Exceptions;
 using DotNetBackendTemplate.Api.Infrastructure.Authentication;
+using DotNetBackendTemplate.Api.Infrastructure.Localization;
 using DotNetBackendTemplate.Api.Infrastructure.Observability;
 using DotNetBackendTemplate.Api.Infrastructure.OpenApi;
 using DotNetBackendTemplate.Api.Persistence;
@@ -11,6 +12,7 @@ using FluentValidation;
 using MediatR;
 using Microsoft.AspNetCore.Localization;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Localization;
 
 namespace DotNetBackendTemplate.Api.Common.Extensions;
 
@@ -74,6 +76,23 @@ internal static class ServiceCollectionExtensions
                 context.ProblemDetails.Extensions["traceId"] =
                     System.Diagnostics.Activity.Current?.Id
                     ?? context.HttpContext.TraceIdentifier;
+
+                // UseStatusCodePages turns empty 401, 403, and 404 responses into Problem Details; give them the same
+                // localized titles as validation and unexpected errors (ADR-0004).
+                IStringLocalizer<ApiResources> localizer =
+                    context.HttpContext.RequestServices.GetRequiredService<IStringLocalizer<ApiResources>>();
+                string? title = context.ProblemDetails.Status switch
+                {
+                    StatusCodes.Status401Unauthorized => localizer["UnauthorizedTitle"].Value,
+                    StatusCodes.Status403Forbidden => localizer["ForbiddenTitle"].Value,
+                    StatusCodes.Status404NotFound => localizer["NotFoundTitle"].Value,
+                    _ => null,
+                };
+
+                if (title is not null)
+                {
+                    context.ProblemDetails.Title = title;
+                }
             };
         });
         services.AddExceptionHandler<GlobalExceptionHandler>();

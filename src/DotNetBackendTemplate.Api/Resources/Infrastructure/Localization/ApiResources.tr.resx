@@ -33,4 +33,13 @@
   <data name="CampaignEndsAtUtcMustBeAfterStartsAtUtc" xml:space="preserve">
     <value>EndsAtUtc, StartsAtUtc değerinden sonra olmalıdır.</value>
   </data>
+  <data name="UnauthorizedTitle" xml:space="preserve">
+    <value>Kimlik doğrulaması gerekiyor.</value>
+  </data>
+  <data name="ForbiddenTitle" xml:space="preserve">
+    <value>Bu işlemi yapmaya yetkiniz yok.</value>
+  </data>
+  <data name="NotFoundTitle" xml:space="preserve">
+    <value>İstenen kaynak bulunamadı.</value>
+  </data>
 </root>

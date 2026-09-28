@@ -30,6 +30,44 @@ public sealed class CampaignEndpointsTests(ApiFactory factory) : IClassFixture<A
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
 
+    [Theory]
+    [InlineData(null, "Authentication is required.")]
+    [InlineData("tr-TR", "Kimlik doğrulaması gerekiyor.")]
+    public async Task UnauthorizedRequestReturnsLocalizedProblemDetails(string? language, string title)
+    {
+        using HttpClient client = factory.CreateClient();
+        if (language is not null)
+        {
+            client.DefaultRequestHeaders.AcceptLanguage.ParseAdd(language);
+        }
+
+        HttpResponseMessage response = await client.GetAsync("/api/v1/campaigns");
+
+        await AssertProblemDetailsAsync(response, HttpStatusCode.Unauthorized, title);
+    }
+
+    [Fact]
+    public async Task ForbiddenRequestReturnsProblemDetails()
+    {
+        using HttpClient client = factory.CreateAuthenticatedClient(role: null);
+
+        HttpResponseMessage response = await client.PostAsJsonAsync(
+            "/api/v1/campaigns",
+            ValidRequest($"Forbidden problem {Guid.NewGuid():N}"));
+
+        await AssertProblemDetailsAsync(response, HttpStatusCode.Forbidden, "You do not have permission to perform this action.");
+    }
+
+    [Fact]
+    public async Task UnknownCampaignReturnsProblemDetails()
+    {
+        using HttpClient client = factory.CreateAuthenticatedClient();
+
+        HttpResponseMessage response = await client.GetAsync($"/api/v1/campaigns/{Guid.NewGuid()}");
+
+        await AssertProblemDetailsAsync(response, HttpStatusCode.NotFound, "The requested resource was not found.");
+    }
+
     [Fact]
     public async Task CreateCampaignWithoutWriteRoleReturnsForbidden()
     {
@@ -608,6 +646,17 @@ public sealed class CampaignEndpointsTests(ApiFactory factory) : IClassFixture<A
 
         AssertAnonymous(paths.GetProperty("/health/live").GetProperty("get"));
         AssertAnonymous(paths.GetProperty("/health/ready").GetProperty("get"));
+    }
+
+    private static async Task AssertProblemDetailsAsync(HttpResponseMessage response, HttpStatusCode status, string title)
+    {
+        response.StatusCode.Should().Be(status);
+        response.Content.Headers.ContentType?.MediaType.Should().Be("application/problem+json");
+
+        using JsonDocument body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        body.RootElement.GetProperty("status").GetInt32().Should().Be((int)status);
+        body.RootElement.GetProperty("title").GetString().Should().Be(title);
+        body.RootElement.TryGetProperty("traceId", out _).Should().BeTrue();
     }
 
     private static object ValidRequest(string name) => new

@@ -81,7 +81,7 @@ public static class UpdateCampaign
             .ProducesValidationProblem()
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)
-            .Produces(StatusCodes.Status404NotFound);
+            .ProducesProblem(StatusCodes.Status404NotFound);
     }
 
     private static async Task<Results<NoContent, NotFound>> HandleAsync(

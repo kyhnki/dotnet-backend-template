@@ -53,6 +53,20 @@ public sealed partial class OpenApiContractTests
                     continue;
                 }
 
+                // UseStatusCodePages and the exception handler turn every error into Problem Details, so the
+                // document must say so; a bare Produces(404) would describe an empty body the API never sends.
+                foreach (JsonProperty response in operation.GetProperty("responses").EnumerateObject())
+                {
+                    bool isError = int.TryParse(response.Name, CultureInfo.InvariantCulture, out int code) && code >= 400;
+                    bool isProblem = response.Value.TryGetProperty("content", out JsonElement content)
+                        && content.TryGetProperty("application/problem+json", out _);
+
+                    if (isError && !isProblem)
+                    {
+                        mismatches.Add($"{method} {path} {response.Name}: error responses must be documented as application/problem+json");
+                    }
+                }
+
                 // Produces<T>() and a typed result such as Ok<T> both declare the same response, so compare each once.
                 foreach (IProducesResponseTypeMetadata produces in endpoint.Metadata
                     .GetOrderedMetadata<IProducesResponseTypeMetadata>()

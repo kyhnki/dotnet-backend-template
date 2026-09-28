@@ -71,7 +71,7 @@ Keep exceptions specific to a responsibility or type. Do not exclude an entire n
 - **SLICE-04:** No type declared under `Persistence` — entity, enum, or anything else — crosses the HTTP boundary in either direction, including types nested in DTOs, collections, or generic results. Returning a DTO that wraps an entity does not satisfy this rule, and binding an entity from a request allows mass assignment. Expose API-owned contract types and map to them in the handler. `Features/Campaigns/CampaignStatus.cs` shows the pattern for an enum; it keeps the persistence enum's name so the JSON contract is unchanged.
 - **SLICE-05:** Pass cancellation tokens to asynchronous persistence and dispatch operations. List operations must be bounded; the campaign example clamps page size to `1..100`.
 - **SLICE-06:** Keep validation in the FluentValidation pipeline and request timing/logging in generic behaviors. Business invariants involving persisted state still need handler-level decisions and appropriate database constraints; input validators are not a substitute for concurrency-safe enforcement.
-- **SLICE-07:** Every business endpoint under `/api` declares a stable name (`WithName`), a tag, a summary, a description, and response metadata, so the OpenAPI document describes it.
+- **SLICE-07:** Every business endpoint under `/api` declares a stable name (`WithName`), a tag, a summary, a description, and response metadata, so the OpenAPI document describes it. Each contract type gets its own schema, and the documented schema must match the type the endpoint binds or returns.
 
 Do not add generic repositories, a custom unit of work, domain events, separate read/write databases, or a generic result abstraction by default. Revisit these choices only for a concrete requirement, recorded in an ADR.
 
@@ -119,7 +119,8 @@ See [ADR-0003](adr/0003-use-time-provider-and-utc-timestamps.md) and [ADR-0004](
 | SLICE-01 | Test | `SliceRulesTests` |
 | SLICE-02 | Test for database access in endpoint signatures; review for other logic | `EndpointRulesTests` |
 | SLICE-03 | Planned: queries must not save and must use `AsNoTracking()` | — |
-| SLICE-04, SLICE-07 | Test | `EndpointRulesTests` |
+| SLICE-04 | Test | `EndpointRulesTests` |
+| SLICE-07 | Test for metadata; runtime test that each operation's schema matches its contract type | `EndpointRulesTests`, `OpenApiContractTests` |
 | SLICE-05 | Review; the campaign page-size clamp has runtime tests | `CampaignEndpointsTests` |
 | SLICE-06 | Review | — |
 | PERS-01 | Planned: no `Migrate` call in production code | — |

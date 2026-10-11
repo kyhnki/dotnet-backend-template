@@ -190,5 +190,10 @@ Serilog provides structured console and request logs. OpenTelemetry instruments 
 - Replace or remove `Features/Campaigns` and its tests.
 - Configure the real identity provider, audience, authorization policies, telemetry destination.
 - Review package versions, secret management, data retention, and deployment migration strategy.
+- Choose your project's license. This template is MIT-licensed, which requires keeping its copyright notice in copies that include substantial portions of its code; your own code can use any license.
 
 See the [architecture overview](docs/basic-architecture.md), [architecture rules and review checklist](docs/architecture-rules.md), and [architecture decision records](docs/adr/README.md) for the starter's structure, dependency boundaries, and accepted design decisions.
+
+## License
+
+Released under the [MIT License](LICENSE).

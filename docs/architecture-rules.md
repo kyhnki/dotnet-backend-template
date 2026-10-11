@@ -219,7 +219,7 @@ dotnet format DotNetBackendTemplate.slnx --verify-no-changes --no-restore
 dotnet test DotNetBackendTemplate.slnx --no-build
 ```
 
-CI/CD remains project-specific. These commands can run locally; this document does not require a GitHub Actions workflow.
+`.github/workflows/ci.yml` runs these commands on every pull request and push to `main`, and branch protection requires its check before merging. Deployment remains project-specific.
 
 ## 8. Changing a rule
 

@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# pull_request (not pull_request_target) runs fork PRs without access to secrets or a write token.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # The check name branch protection requires; rename both together.
+    name: Build and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      # The review gate from docs/architecture-rules.md, section 7. Integration tests use the runner's Docker
+      # through Testcontainers.
+      - name: Restore
+        run: dotnet restore DotNetBackendTemplate.slnx
+
+      - name: Build
+        run: dotnet build DotNetBackendTemplate.slnx --no-restore -warnaserror
+
+      - name: Verify formatting
+        run: dotnet format DotNetBackendTemplate.slnx --verify-no-changes --no-restore
+
+      - name: Test
+        run: dotnet test DotNetBackendTemplate.slnx --no-build

@@ -177,7 +177,9 @@ Architecture checks are scoped guardrails, not proof of complete correctness. Th
 
 ## CI/CD
 
-This starter intentionally does not include a provider-specific CI/CD workflow. Add one after cloning that matches the product's hosting, secrets, migration, and deployment requirements. At minimum, automate restore, formatting verification, a warnings-as-errors build, and all tests.
+`.github/workflows/ci.yml` runs the review gate from [architecture rules](docs/architecture-rules.md) on every pull request and every push to `main`: restore, a warnings-as-errors build, format verification, and all tests, including the Testcontainers integration tests and the architecture tests. `main` requires that check to pass before a pull request can merge.
+
+Deployment is intentionally not included. Add CD after cloning that matches the product's hosting, secrets, migration, and deployment requirements. Security problems are reported privately as described in [SECURITY.md](SECURITY.md).
 
 ## Observability
 
